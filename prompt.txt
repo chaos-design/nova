@@ -1,0 +1,24 @@
+### Cursor / v0 / Claude Project Initialization Prompt
+
+```text
+You are an expert full-stack engineer and AI architect. Initialize a Next.js 15+ repository with TypeScript, Tailwind CSS, and Shadcn UI named "NOVA" (Next-gen Operational Verification for Agents). This project is designed as an advanced benchmarking dashboard and sandbox to verify, test, and orchestrate AI Agent capabilities.
+
+#### Project Essence & Branding
+- **Name:** NOVA (Next-gen Operational Verification for Agents)
+- **Slogan:** "Where Future Agents Converge, Coalesce, and Cosmic-Burst. (未来 Agent 的汇聚、演进与新星爆发。)"
+- **Visual Aesthetic:** Cyber-cosmic theme. Dark mode by default (`bg-slate-950`), neon accents (cyan, purple, and starlight white), sleek animations, and charts displaying agent telemetry.
+
+#### Core Features to Implement (Mock Data acceptable for UI/UX):
+1. **Dashboard (Telemetry Hub):** A high-tech overview showing active Agent verifications, real-time performance graphs (success rates, latency, memory utilization), and a live logs terminal stream.
+2. **Capability Testing Matrix:** An interactive interface based on `agents.md` mapping out Autonomy, Tool Usage, Memory Retention, and Reasoning Depth. Users should be able to trigger mock tests and view breakdown scores.
+3. **Sandbox Simulator:** A visual playground where users can input custom system prompts, select an Agent model, simulate a chaotic environment (injecting network delays or bad API payloads), and watch the Agent self-correct in real-time.
+4. **Leaderboard & Reports:** A data table ranking tested Agents based on their "NOVA Composite Score" with downloadable JSON report summaries.
+
+#### Architecture Guidelines
+- Use Next.js App Router (`app/` directory).
+- Separate UI components into modular structures inside `components/ui/` or `components/nova/`.
+- Ensure strict TypeScript typing for Agent profiles, test metrics, and simulation logs.
+- Use Lucide-react for high-quality, futuristic iconography (e.g., Sparkles, Orbit, Brain, Activity).
+
+Please generate the file structure, core layout, and high-fidelity mock implementation for the main dashboard and testing playground pages first.
+```

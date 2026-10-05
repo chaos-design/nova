@@ -1,0 +1,514 @@
+"use client";
+
+import { cn } from "cn";
+import { Play, RotateCcw, ShieldAlert, Sparkles } from "lucide-react";
+import { useMemo, useState } from "react";
+import { AgentIdentity } from "@/components/nova/agent-identity";
+import { LogStream } from "@/components/nova/log-stream";
+import { ScoreGauge } from "@/components/nova/score-gauge";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import { useSimulationRun } from "@/hooks/use-simulation-run";
+import type { ScriptStep, SimulationPlan } from "@/lib/nova";
+import {
+  agentById,
+  buildSimulationPlan,
+  CHAOS_KINDS,
+  DEFAULT_SIMULATION_CONFIG,
+  ENVIRONMENTS,
+  formatDuration,
+  gradeMeta,
+  gradeOf,
+  MODEL_REGISTRY,
+  resilienceFactor,
+} from "@/lib/nova";
+import type {
+  AgentProfile,
+  ChaosInjection,
+  ChaosKind,
+  SimulationConfig,
+} from "@/lib/nova/types";
+
+/** 混沌强度的上限（滑块最大值） */
+const INTENSITY_MAX = 100;
+
+/**
+ * 沙盒模拟器。
+ *
+ * 结构上分成两条独立的数据流：
+ * - 配置态（Agent / 环境 / 提示词 / 混沌注入）由本组件持有；
+ * - 运行态（日志、进度、得分）由 `useSimulationRun` 持有。
+ *
+ * 配置一变，剧本立即重算并自动回到初始态 —— 这条约束由 hook 保证，
+ * 组件本身不需要处理"配置变更时的收尾"。
+ */
+export function SandboxPlayground({
+  agents,
+}: {
+  agents: readonly AgentProfile[];
+}) {
+  const [config, setConfig] = useState<SimulationConfig>(() =>
+    defaultConfig(agents[0]?.id ?? ""),
+  );
+
+  const agent = agentById(config.agentId);
+  const plan = useMemo(
+    () => buildSimulationPlan(config, agent),
+    [config, agent],
+  );
+  const run = useSimulationRun(plan);
+
+  const environment = ENVIRONMENTS.find(
+    (item) => item.id === config.environment,
+  );
+  const model = MODEL_REGISTRY.find((item) => item.id === agent.model);
+  const faultCount = plan.steps.filter((step) => step.chaos).length;
+  const totalDuration = plan.steps.reduce((sum, step) => sum + step.delayMs, 0);
+
+  const patch = (changes: Partial<SimulationConfig>) =>
+    setConfig((prev) => ({ ...prev, ...changes }));
+
+  const patchChaos = (kind: ChaosKind, changes: Partial<ChaosInjection>) =>
+    setConfig((prev) => ({
+      ...prev,
+      chaos: prev.chaos.map((item) =>
+        item.kind === kind ? { ...item, ...changes } : item,
+      ),
+    }));
+
+  const running = run.status === "running";
+
+  return (
+    <div className="space-y-4">
+      <div className="grid items-start gap-4 xl:grid-cols-[22rem_minmax(0,1fr)]">
+        {/* ---------------- 配置面板 ---------------- */}
+        <Card className="h-fit">
+          <CardHeader>
+            <CardTitle>沙盒配置</CardTitle>
+            <CardDescription>
+              选择目标 Agent 与运行环境，生成一份可复现的运行剧本
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent className="space-y-5">
+            <div className="space-y-2">
+              <Label htmlFor="sandbox-agent">目标 Agent</Label>
+              <Select
+                value={config.agentId}
+                onValueChange={(value) => patch({ agentId: value })}
+                disabled={running}
+              >
+                <SelectTrigger id="sandbox-agent" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {agents.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.name} · {item.codename}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="nova-panel rounded-lg p-3">
+              <AgentIdentity agent={agent} />
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <span className="text-[0.6875rem] text-muted-foreground">
+                  韧性系数
+                </span>
+                <span className="font-mono text-xs text-nova-cyan">
+                  {resilienceFactor(agent).toFixed(2)}
+                </span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span className="text-[0.6875rem] text-muted-foreground">
+                  模型
+                </span>
+                <span className="truncate font-mono text-[0.6875rem] text-foreground/90">
+                  {model?.label ?? agent.model} · {model?.contextWindow ?? "-"}{" "}
+                  ctx
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="sandbox-env">运行环境</Label>
+              <Select
+                value={config.environment}
+                onValueChange={(value) =>
+                  patch({
+                    environment: value as SimulationConfig["environment"],
+                  })
+                }
+                disabled={running}
+              >
+                <SelectTrigger id="sandbox-env" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ENVIRONMENTS.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+                {environment?.description}；注入强度上限{" "}
+                {Math.round((environment?.chaosCeiling ?? 1) * 100)}%
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="sandbox-steps">最大执行步数</Label>
+                <span className="font-mono text-xs text-foreground tabular-nums">
+                  {config.maxSteps}
+                </span>
+              </div>
+              <Slider
+                id="sandbox-steps"
+                min={4}
+                max={14}
+                step={1}
+                value={[config.maxSteps]}
+                onValueChange={([value]) => patch({ maxSteps: value })}
+                disabled={running}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="sandbox-prompt">系统提示词</Label>
+              <Textarea
+                id="sandbox-prompt"
+                value={config.systemPrompt}
+                onChange={(event) =>
+                  patch({ systemPrompt: event.target.value })
+                }
+                rows={9}
+                className="resize-none font-mono text-xs leading-relaxed"
+                disabled={running}
+                placeholder="描述 Agent 在沙盒中必须遵守的约束…"
+              />
+              <p className="text-[0.6875rem] text-muted-foreground">
+                {config.systemPrompt.length} 字符 · 将参与静态提示词校验
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* ---------------- 执行面板 ---------------- */}
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>运行控制台</CardTitle>
+              <CardDescription>
+                {plan.steps.length} 步 · 预计耗时{" "}
+                {formatDuration(totalDuration)} ·{" "}
+                {running ? "正在执行" : "待运行"}
+              </CardDescription>
+              <CardAction>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={run.reset}
+                    disabled={running}
+                  >
+                    <RotateCcw />
+                    重置
+                  </Button>
+                  <Button size="sm" onClick={run.start} disabled={running}>
+                    <Play />
+                    开始模拟
+                  </Button>
+                </div>
+              </CardAction>
+            </CardHeader>
+
+            <CardContent>
+              <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
+                <ScoreGauge
+                  value={run.score}
+                  label="本次得分"
+                  caption={
+                    run.status === "completed"
+                      ? `${gradeOf(run.score)} · ${gradeMeta(gradeOf(run.score)).label}`
+                      : "满分基准 100"
+                  }
+                  accent={
+                    run.score >= 85 ? "cyan" : run.score >= 72 ? "sky" : "amber"
+                  }
+                />
+
+                <div className="w-full flex-1 space-y-3">
+                  <div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">执行进度</span>
+                      <span className="font-mono tabular-nums text-foreground">
+                        {run.played} / {run.total}
+                      </span>
+                    </div>
+                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/6">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-nova-cyan to-nova-violet transition-[width] duration-300"
+                        style={{ width: `${Math.round(run.progress * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                    <Stat
+                      label="反思轮次"
+                      value={countSteps(
+                        plan,
+                        run.cursor,
+                        (step) => step.reflection === true,
+                      )}
+                    />
+                    <Stat
+                      label="已注入故障"
+                      value={countSteps(
+                        plan,
+                        run.cursor,
+                        (step) => step.chaos !== undefined,
+                      )}
+                      accent="rose"
+                    />
+                    <Stat
+                      label="已自愈"
+                      value={countSteps(
+                        plan,
+                        run.cursor,
+                        (step) =>
+                          step.chaos !== undefined && step.level === "success",
+                      )}
+                      accent="cyan"
+                    />
+                    <Stat label="剧本步数" value={run.total} />
+                  </dl>
+
+                  {run.result && (
+                    <div
+                      className={cn(
+                        "rounded-lg border p-3 text-xs leading-relaxed",
+                        run.result.success
+                          ? "border-nova-cyan/30 bg-nova-cyan/6"
+                          : "border-nova-rose/30 bg-nova-rose/6",
+                      )}
+                    >
+                      <p
+                        className={cn(
+                          "flex items-center gap-1.5 font-medium",
+                          run.result.success
+                            ? "text-nova-cyan"
+                            : "text-nova-rose",
+                        )}
+                      >
+                        <Sparkles className="size-3.5" />
+                        {run.result.success ? "任务达成" : "任务未达成"}
+                      </p>
+                      <p className="mt-1.5 text-muted-foreground">
+                        {run.result.success
+                          ? `在 ${environment?.label}中完成 ${run.result.steps} 步执行，通过 ${run.result.reflections} 次自我纠错。`
+                          : "该 Agent 在当前混沌强度下未能自愈，请降低注入强度或更换模型。"}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>执行日志</CardTitle>
+              <CardDescription>
+                实时观察 Agent 的规划、工具调用与自我纠错过程
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <LogStream
+                logs={run.logs}
+                emptyHint="点击「开始模拟」投放 Agent 进入沙盒…"
+              />
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* ---------------- 混沌注入 ---------------- */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldAlert className="size-4 text-nova-rose" />
+            混沌注入
+          </CardTitle>
+          <CardDescription>
+            注入强度会被当前环境的 chaos ceiling 二次裁剪（
+            {environment?.label}：上限{" "}
+            {Math.round((environment?.chaosCeiling ?? 1) * 100)}
+            %），实际生效值见每项右侧
+          </CardDescription>
+          <CardAction>
+            <Badge variant="outline" className="font-mono text-[0.625rem]">
+              {faultCount} 处故障点
+            </Badge>
+          </CardAction>
+        </CardHeader>
+
+        <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {CHAOS_KINDS.map((item) => {
+            const injection = config.chaos.find(
+              (chaos) => chaos.kind === item.kind,
+            );
+            const enabled = injection?.enabled ?? false;
+            const intensity = injection?.intensity ?? 0;
+            const effective =
+              Math.round(intensity * (environment?.chaosCeiling ?? 1) * 100) /
+              100;
+
+            return (
+              <div
+                key={item.kind}
+                className={cn(
+                  "rounded-lg border p-3 transition-colors",
+                  enabled
+                    ? "border-nova-rose/30 bg-nova-rose/6"
+                    : "border-white/8 bg-white/2",
+                )}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{item.label}</p>
+                    <p className="mt-0.5 text-[0.6875rem] leading-relaxed text-muted-foreground">
+                      {item.description}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={enabled}
+                    onCheckedChange={(checked) =>
+                      patchChaos(item.kind, { enabled: checked })
+                    }
+                    disabled={running}
+                    aria-label={`启用${item.label}`}
+                  />
+                </div>
+
+                {enabled && (
+                  <div className="mt-3 space-y-1.5">
+                    <div className="flex items-center justify-between font-mono text-[0.625rem] text-muted-foreground">
+                      <span>强度 {Math.round(intensity * 100)}%</span>
+                      <span
+                        className={cn(
+                          effective < intensity && "text-nova-amber",
+                        )}
+                      >
+                        实际 {Math.round(effective * 100)}%
+                      </span>
+                    </div>
+                    <Slider
+                      value={[intensity * INTENSITY_MAX]}
+                      min={10}
+                      max={INTENSITY_MAX}
+                      step={5}
+                      onValueChange={([value]) =>
+                        patchChaos(item.kind, {
+                          intensity: value / INTENSITY_MAX,
+                        })
+                      }
+                      disabled={running}
+                      aria-label={`${item.label}强度`}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* 局部辅助                                                                    */
+/* -------------------------------------------------------------------------- */
+
+function defaultConfig(agentId: string): SimulationConfig {
+  return {
+    ...DEFAULT_SIMULATION_CONFIG,
+    agentId,
+    chaos: CHAOS_KINDS.map((item) => ({
+      kind: item.kind,
+      enabled: item.kind === "malformedPayload" || item.kind === "latency",
+      intensity: item.kind === "malformedPayload" ? 0.45 : 0.6,
+    })),
+  };
+}
+
+/** 小号统计块 */
+function Stat({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string | number;
+  accent?: "cyan" | "rose";
+}) {
+  return (
+    <div className="nova-panel rounded-lg px-2.5 py-2">
+      <dt className="text-[0.625rem] text-muted-foreground">{label}</dt>
+      <dd
+        className={cn(
+          "mt-0.5 font-mono text-sm tabular-nums",
+          accent === "cyan"
+            ? "text-nova-cyan"
+            : accent === "rose"
+              ? "text-nova-rose"
+              : "text-foreground",
+        )}
+      >
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+/** 统计已播放的剧本步骤中满足条件的数量 */
+function countSteps(
+  plan: SimulationPlan,
+  cursor: number,
+  predicate: (step: ScriptStep) => boolean,
+): number {
+  let count = 0;
+  for (const step of plan.steps) {
+    if (step.step > cursor) break;
+    if (predicate(step)) count += 1;
+  }
+  return count;
+}

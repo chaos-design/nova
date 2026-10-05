@@ -1,0 +1,161 @@
+/**
+ * NOVA 深空主题扩展。
+ *
+ * 与 `globals.css` 的分工：
+ * - `globals.css` 由 shadcn CLI 托管，负责 shadcn 的标准令牌（`:root` / `.dark`）与字体映射。
+ * - 本文件由项目自有，负责 NOVA 的霓虹色板、动画关键帧与背景工具类。
+ *
+ * 之所以拆开：shadcn 在 `add` / `migrate` 时会重写 `globals.css` 的标准区块，
+ * 把自有主题隔离在这里可以让重写操作永远不会吃掉 NOVA 的视觉配置。
+ */
+
+/* -------------------------------------------------------------------------- */
+/* 动画关键帧                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * 关键帧刻意声明在 @theme 之外：Tailwind v4 只会输出"被使用到"的
+ * `@theme` 内关键帧，而 nova-scan 同时被 `.nova-scan` 工具类与
+ * `animate-nova-scan` 两个入口引用，放在 @theme 里会被摇掉。
+ */
+@keyframes nova-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes nova-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}
+
+@keyframes nova-scan {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.55;
+  }
+  88% {
+    opacity: 0.55;
+  }
+  100% {
+    transform: translateY(1000%);
+    opacity: 0;
+  }
+}
+
+@keyframes nova-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(2.5%, -3%, 0);
+  }
+}
+
+@theme inline {
+  /* 霓虹色板：青 / 紫 / 品红 / 天蓝 / 琥珀 / 玫红 */
+  --color-nova-cyan: var(--nova-cyan);
+  --color-nova-violet: var(--nova-violet);
+  --color-nova-fuchsia: var(--nova-fuchsia);
+  --color-nova-sky: var(--nova-sky);
+  --color-nova-amber: var(--nova-amber);
+  --color-nova-rose: var(--nova-rose);
+  --color-nova-slate: var(--nova-slate);
+  --color-nova-starlight: var(--nova-starlight);
+
+  /* 动画 */
+  --animate-nova-pulse: nova-pulse 2.4s ease-in-out infinite;
+  --animate-nova-scan: nova-scan 9s linear infinite;
+  --animate-nova-drift: nova-drift 26s ease-in-out infinite;
+  --animate-nova-blink: nova-blink 1.1s steps(2, start) infinite;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 工具类                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/** 星空底色：深空径向渐变 + 青色/紫色星云辉光 */
+@utility nova-backdrop {
+  background-color: var(--nova-void);
+  background-image:
+    radial-gradient(
+      120rem 60rem at 12% -10%,
+      color-mix(in oklab, var(--nova-cyan) 14%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      90rem 55rem at 92% 4%,
+      color-mix(in oklab, var(--nova-violet) 15%, transparent),
+      transparent 62%
+    ),
+    radial-gradient(
+      70rem 50rem at 50% 118%,
+      color-mix(in oklab, var(--nova-fuchsia) 9%, transparent),
+      transparent 58%
+    );
+}
+
+/** 极坐标网格，叠加在星空之上用于强化"控制台"质感 */
+@utility nova-grid {
+  background-image:
+    linear-gradient(
+      to right,
+      color-mix(in oklab, var(--nova-cyan) 12%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      to bottom,
+      color-mix(in oklab, var(--nova-cyan) 12%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, #000 40%, transparent);
+}
+
+/** 毛玻璃面板：NOVA 所有卡片的基础质感 */
+@utility nova-panel {
+  background-color: color-mix(in oklab, var(--card) 78%, transparent);
+  backdrop-filter: blur(14px);
+  border: 1px solid color-mix(in oklab, var(--nova-cyan) 12%, transparent);
+}
+
+/** 霓虹文字 */
+@utility nova-glow-text {
+  text-shadow:
+    0 0 18px color-mix(in oklab, currentColor 45%, transparent),
+    0 0 46px color-mix(in oklab, currentColor 22%, transparent);
+}
+
+/** 顶部渐隐分隔线 */
+@utility nova-hairline {
+  background-image: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in oklab, var(--nova-cyan) 42%, transparent),
+    color-mix(in oklab, var(--nova-violet) 34%, transparent),
+    transparent
+  );
+}
+
+/** 等宽小标签，终端与徽章的排版基线 */
+@utility nova-mono-label {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.6875rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
