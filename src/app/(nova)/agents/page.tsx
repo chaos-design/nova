@@ -1,10 +1,11 @@
-import { Boxes, Plus } from "lucide-react";
+import { Boxes, ServerCog } from "lucide-react";
 import type { Metadata } from "next";
 import { PageHeader } from "@/components/layout/page-header";
 import { AgentCard } from "@/components/nova/agent-card";
 import { AgentIdentity } from "@/components/nova/agent-identity";
+import { AgentOnboardingDialog } from "@/components/nova/agent-onboarding-dialog";
 import { AgentStatusBadge } from "@/components/nova/agent-status-badge";
-import { Button } from "@/components/ui/button";
+import { LocalAgentCard } from "@/components/nova/local-agent-card";
 import {
   Card,
   CardContent,
@@ -25,6 +26,7 @@ import {
   ENVIRONMENTS,
   formatNumber,
   formatTimestamp,
+  LOCAL_AGENTS,
   VERIFICATION_RUNS,
 } from "@/lib/nova";
 import type { AgentStatus, EnvironmentId } from "@/lib/nova/types";
@@ -62,16 +64,7 @@ export default function AgentsPage() {
         eyebrow="Agent Registry"
         title="Agent 注册表"
         subtitle="所有进入 NOVA 沙盒的 Agent 都在这里登记：模型版本、能力向量画像、场景通过率与证书状态。接入即开始接受验证。"
-        actions={
-          <Button
-            variant="outline"
-            disabled
-            title="接入流程需要真实执行器，演示阶段不可用"
-          >
-            <Plus data-icon="inline-start" />
-            接入新 Agent
-          </Button>
-        }
+        actions={<AgentOnboardingDialog />}
       />
 
       <Card>
@@ -101,6 +94,54 @@ export default function AgentsPage() {
           <AgentCard key={agent.id} agent={agent} />
         ))}
       </div>
+
+      <Card id="local-agents" className="scroll-mt-24">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ServerCog className="size-4 text-nova-accent" />
+            本地接入
+          </CardTitle>
+          <CardDescription>
+            登记在{" "}
+            <code className="font-mono text-nova-accent/80">
+              src/lib/nova/local-agents.ts
+            </code>{" "}
+            的本地 Agent。未跑完验证前没有评分，因此不进入排行榜与能力矩阵。
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {LOCAL_AGENTS.length > 0 ? (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {LOCAL_AGENTS.map((agent) => (
+                <LocalAgentCard key={agent.id} agent={agent} />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                还没有本地 Agent。点右上角「接入新
+                Agent」按三步走：确认端点、登记档案、 落地配置。
+              </p>
+              <ol className="space-y-1.5 text-xs leading-relaxed text-muted-foreground/80">
+                <li>
+                  1 · 起一个 OpenAI 兼容端点（Ollama / vLLM / LM Studio），
+                  必须支持 function calling
+                </li>
+                <li>
+                  2 · 把 <code className="font-mono">LLM_BASE_URL</code>、{" "}
+                  <code className="font-mono">LLM_API_KEY</code>、{" "}
+                  <code className="font-mono">LLM_MODEL</code> 写进{" "}
+                  <code className="font-mono">.env.local</code>
+                </li>
+                <li>
+                  3 · 往 <code className="font-mono">LOCAL_AGENTS</code>{" "}
+                  追加一条登记，重启开发服务器后它就会出现在这里
+                </li>
+              </ol>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

@@ -42,17 +42,24 @@ Server Component、Client Component、Route Handler、脚本任务复用。
         └─ 交互态（选中、排序、复测结果）
 ```
 
-### 为什么没有 API 路由
+### Route Handler 的位置
 
-当前版本是**纯前端演示**，所有数据由 `mock-data.ts` 同步提供。
-在数据源还是本地纯函数时，加一层 Route Handler 只会引入：
+Route Handler 只做**无状态的服务端代理**，不保存、不编造任何数据：
 
-- 多一次网络往返（首屏变慢）；
-- 多一个需要维护的契约（序列化 / 反序列化）；
-- 多一处 hydration 边界风险。
+| 路由 | 职责 |
+| :--- | :--- |
+| `POST /api/sandbox/run` | 调真实 LLM 执行器，SSE 把沙盒事件流回客户端 |
+| `POST /api/agents/probe` | 探测用户填写的 OpenAI 兼容端点是否可达、协议是否兼容 |
 
-**收益为零，成本为正**，因此不做。等真实后端就位时再加，届时契约由
-`src/lib/nova` 的类型定义直接生成，不需要重新设计。
+在数据源还是本地纯函数时，Route Handler 存在的唯一理由是**必须经过服务端**：
+
+- 密钥只存在于服务端环境变量（`readLlmSettings`），不能经过客户端；
+- Agent 端点通常监听 `127.0.0.1`，浏览器直连不了；
+- 向云厂商/本地模型发请求时由服务端统一处理超时与错误归一。
+
+**收益为零的事情不做**：所有页面数据仍由 `mock-data.ts` / `local-agents.ts`
+同步提供，首屏走 Server Component 直出，不绕 API。等真实后端就位时再把
+读路径换成 fetch，届时契约由 `src/lib/nova` 的类型定义直接生成。
 
 ---
 
@@ -106,6 +113,12 @@ NOVA 的做法是**一切由序号与锚点决定**：
 | `leaderboard-table` | 表头排序、行选中、报告下载 |
 | `capability-matrix-board` | 单元格复测、行选中 |
 | `nav-list` / `mobile-nav` / `live-clock` | `usePathname` / 抽屉状态 / 秒级时钟 |
+| `app-shell` | ⌘K 快捷键与搜索弹窗是全局单例，状态挂在常驻外壳上 |
+| `nova-sidebar` | 收起态 + localStorage 持久化 |
+| `appearance-menu` | 偏好写入 localStorage 并立即作用到 `<html>` |
+| `global-search` | 弹窗本身是无状态客户端组件，键盘导航在本地 |
+| `agent-onboarding-dialog` | 多步向导 + 表单 + 探针反馈 |
+| `local-agent-card` | 一键复制环境变量片段到剪贴板 |
 
 其余全部是服务端渲染。**遥测种子等首屏数据一律由页面作为 props 传入**，
 不在客户端重新生成 —— 这是消除 hydration 不一致的根本做法。
@@ -126,6 +139,24 @@ NOVA 的做法是**一切由序号与锚点决定**：
 
 一个已踩过的坑：`@keyframes` 写在 `@theme` 内会被 Tailwind 摇掉
 （只有被引用的才会输出）。`nova-theme.css` 里的关键帧因此全部声明在 `@theme` 之外。
+
+### 界面主色 vs 数据语义色
+
+色板被拆成两层：
+
+- `--nova-cyan` 等六个霓虹色是**语义色**（自主性=青、混沌异常=玫红），固定不变；
+- `--nova-accent` 是**界面主色**，由 `[data-nova-accent]` 预设覆写，只作用于
+  外壳（导航、焦点环、主按钮、网格、星云辉光）。
+
+主色切换的三个非显然决策：
+
+1. **shadcn 令牌重挂在 `nova-theme.css` 而不是 `globals.css`** —— 后者被 CLI 托管，
+   一次 `add`/`migrate` 会把值覆盖回中性色。
+2. **选择器写作 `html[data-nova-accent]`** —— globals 的 `:root` 同特异度且更靠后，
+   只有 `(0,1,1)` 能稳定压过 `(0,1,0)`。
+3. **首帧之前由内联脚本落定偏好**（`appearance.ts · APPEARANCE_BOOTSTRAP`），
+   否则会先闪一次默认配色。这是整页唯一的 `dangerouslySetInnerHTML`，
+   在 `layout.tsx` 里按行关掉 Biome 规则并注明原因。
 
 ---
 
@@ -182,6 +213,21 @@ NOVA 的做法是**一切由序号与锚点决定**：
 **理由**：领域模型是这个项目最重要的资产。分散在 10 个文件里，
 读者无法一次建立完整心智模型，也无法在改一个字段时看清影响面。
 单文件的代价是文件偏长 —— 这个代价低于「读不懂全局」的代价。
+
+### 7.6 时间口径统一为北京时间
+
+**决策**：界面上所有时间都以 `Asia/Shanghai` 渲染，不跟随浏览器本地时区。
+
+**理由**：
+
+- 运营口径是东八区；跟随浏览器意味着同一批数据在上海和旧金山读出不同的「最近验证时间」，
+  对照评测结果时没有单一说法；
+- 服务端预渲染与客户端水合的运行时区不一定相同，`Date#getHours()` 直接输出会
+  当场制造一处 hydration 不一致 —— 固定 `timeZone` 的 `Intl.DateTimeFormat`
+  在服务端和浏览器一定算出同一串字符。
+
+**实现**：`format.ts` 集中定义 `DISPLAY_TIME_ZONE` 与全部格式化函数；
+`mock-data.ts` 的遥测横坐标标签也经由它生成，不在页面里各自 `toLocaleString`。
 
 ---
 

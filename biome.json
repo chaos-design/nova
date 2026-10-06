@@ -53,6 +53,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["src/app/nova-theme.css"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noImportantStyles": "off"
+          }
+        }
+      }
     }
   ],
   "assist": {

@@ -46,6 +46,13 @@ NOVA 平台扮演的角色与之对应 —— 作为 AI 的**宇宙催化剂**�
 
 评测标准的完整定义见 [`docs/nova-standard.md`](docs/nova-standard.md)。
 
+**控制台级能力**：
+
+- **全局搜索（⌘K / Ctrl+K）**：搜索页面、Agent 档案与评测口径名词，键盘完成全部操作；
+- **界面设置**：深空唯一配色内可切换界面主色与动效档位，偏好本机持久化；
+- **本地 Agent 接入**：注册表页一键打开三步向导（端点准备 → 档案登记 → 落地配置），
+  服务端实时探测 OpenAI 兼容端点可达性；本地档案通过 `src/lib/nova/local-agents.ts` 登记。
+
 ---
 
 ## 技术栈
@@ -114,27 +121,36 @@ nova/
 │   │   │   ├── matrix/page.tsx
 │   │   │   ├── sandbox/page.tsx
 │   │   │   └── leaderboard/page.tsx
+│   │   ├── api/
+│   │   │   ├── sandbox/run/route.ts   # 真实执行器（SSE 流式沙盒事件）
+│   │   │   └── agents/probe/route.ts  # 端点可达性 / 协议兼容探测
 │   │   ├── globals.css          # shadcn 托管：标准令牌 + 字体映射
-│   │   ├── layout.tsx           # 根布局：字体、主题、元信息
+│   │   ├── layout.tsx           # 根布局：字体、主题、元信息、外观引导脚本
 │   │   ├── nova-theme.css       # NOVA 自有：霓虹色板、关键帧、背景工具类
 │   │   └── page.tsx             # 根路径 → /dashboard
 │   ├── components/
-│   │   ├── layout/              # 外壳：导航、顶栏、品牌、页头
-│   │   ├── nova/                # 领域组件：仪表、图表、矩阵、沙盒、终端
+│   │   ├── layout/              # 外壳：侧边栏、顶栏、搜索、外观菜单、品牌、页头
+│   │   ├── nova/                # 领域组件：仪表、图表、矩阵、沙盒、终端、接入向导
 │   │   └── ui/                  # shadcn/ui 生成，CLI 托管，勿手改
 │   ├── hooks/
 │   │   ├── use-telemetry-stream.ts   # 遥测推进状态机
-│   │   └── use-simulation-run.ts     # 沙盒剧本播放器
+│   │   └── use-sandbox-run.ts        # 沙盒剧本播放器（含真实执行器）
 │   └── lib/
 │       ├── nova/                # 领域层（唯一数据来源，见下文）
 │       │   ├── types.ts         # 全站唯一类型事实来源
 │       │   ├── constants.ts     # 能力向量、生命周期、混沌类型等静态配置
 │       │   ├── mock-data.ts     # 演示数据层（确定性，可整体替换）
+│       │   ├── local-agents.ts  # 本地 Agent 登记点 + 接入产物生成
 │       │   ├── scoring.ts       # 综合评分、评级、排行榜派生
 │       │   ├── simulation.ts    # 沙盒剧本生成引擎
+│       │   ├── executor.ts      # 执行器契约（SandboxEvent / StepLog）
+│       │   ├── executors/       # live / llm / chaos / simulation / tools
 │       │   ├── report.ts        # 证书与 JSON 报告构建
+│       │   ├── search.ts        # 全局搜索索引与排序
+│       │   ├── appearance.ts    # 主色 / 动效偏好与引导脚本
+│       │   ├── agent-onboarding.ts  # 端点探针的数据访问边界
 │       │   ├── theme.ts         # 语义 → Tailwind 类名映射
-│       │   ├── format.ts        # 数值 / 时间格式化
+│       │   ├── format.ts        # 数值 / 北京时间 格式化
 │       │   └── index.ts         # 统一出口
 │       └── utils.ts             # shadcn 约定的 cn 出口
 ├── AGENTS.md                    # 供 AI Agent 阅读的项目约定
@@ -148,7 +164,8 @@ nova/
 
 ## 数据层说明
 
-当前版本**不包含任何后端与 API 路由**。所有数据来自 `src/lib/nova/mock-data.ts`，
+当前版本只包含两条轻量 Route Handler（沙盒真实执行与端点探针），
+页面数据本身全部来自 `src/lib/nova/mock-data.ts` 与 `local-agents.ts`，
 且是**确定性生成**的：
 
 - 时间戳锚定在 `DEMO_EPOCH`（`src/lib/nova/constants.ts`），页面可被静态预渲染，

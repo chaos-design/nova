@@ -14,16 +14,16 @@ export function NovaLogo({
   return (
     <div className={cn("flex items-center gap-3", className)}>
       <div className="relative grid size-9 shrink-0 place-items-center">
-        <div className="absolute inset-0 rounded-full border border-nova-cyan/40" />
-        <div className="absolute inset-[5px] animate-nova-pulse rounded-full border border-nova-violet/50" />
-        <Sparkles className="size-4 text-nova-cyan nova-glow-text" />
+        <div className="absolute inset-0 rounded-full border border-nova-accent/40" />
+        <div className="absolute inset-[5px] animate-nova-pulse rounded-full border border-nova-accent-2/50" />
+        <Sparkles className="size-4 text-nova-accent nova-glow-text" />
       </div>
       {!compact && (
         <div className="leading-tight">
           <div className="font-heading text-base font-semibold tracking-[0.18em] text-nova-starlight">
             {NOVA_BRAND.fullName}
           </div>
-          <div className="nova-mono-label whitespace-nowrap text-[0.625rem] tracking-[0.12em] text-nova-cyan/70">
+          <div className="nova-mono-label whitespace-nowrap text-[0.625rem] tracking-[0.12em] text-nova-accent/70">
             {NOVA_BRAND.logoTag}
           </div>
         </div>

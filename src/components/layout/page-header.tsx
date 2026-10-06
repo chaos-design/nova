@@ -24,7 +24,7 @@ export function PageHeader({
     >
       <div className="space-y-2">
         {eyebrow && (
-          <p className="nova-mono-label text-nova-cyan/80">{eyebrow}</p>
+          <p className="nova-mono-label text-nova-accent/80">{eyebrow}</p>
         )}
         <h1 className="font-heading text-2xl font-semibold tracking-tight text-nova-starlight sm:text-3xl">
           {title}

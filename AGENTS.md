@@ -10,10 +10,10 @@
 ## 1. 项目是什么
 
 NOVA（Next-gen Operational Verification for Agents）是一个面向 AI Agent 的
-验证、测试与编排控制台。当前版本是**纯前端演示**：无后端、无数据库、无 API 路由，
-所有数据来自 `src/lib/nova/mock-data.ts` 的确定性生成。
-
-界面上出现的每一个分数都必须能追溯到 `docs/nova-standard.md` 的某一条规则 ——
+验证、测试与编排控制台。演示数据全部来自 `src/lib/nova/mock-data.ts` 的确定性生成，
+本地 Agent 的登记由 `src/lib/nova/local-agents.ts` 提供；Route Handler
+（`/api/sandbox/run`、`/api/agents/probe`）只做服务端代理，不持久化数据。
+所有在界面上出现的分数都必须能追溯到 `docs/nova-standard.md` 的某一条规则 ——
 新增任何"指标"之前，先读那份文档。
 
 ---
@@ -51,6 +51,9 @@ npm run build      # 生产构建（同时校验类型）
   界面文案全部中文，通过 `VECTOR_META` / `CHAOS_KINDS` 等静态配置查表映射。
 - 注释解释**为什么**，不解释**做了什么**。
 - 导入统一走 `@/lib/nova` 出口，不要深入内部模块路径。
+- 时间一律用 `format.ts` 的函数格式化（固定北京时间），不写 `toLocaleString` / `getHours()`。
+- 界面主色用 `text-nova-accent` / `bg-nova-accent`，不要在组件里硬编码 `nova-cyan`；
+  六个亮色调只保留给**语义色**（`theme.ts` 里的状态 / 等级 / 向量映射）。
 
 ### 3.3 客户端边界
 
@@ -80,9 +83,14 @@ npm run build      # 生产构建（同时校验类型）
    它会被 shadcn 的重写操作吃掉。
 3. **不引入明暗主题切换**。深空唯一是有意的产品决策，理由见
    [`docs/architecture.md`](docs/architecture.md#71-深空唯一主题不做明暗切换)。
+   可切换的只是界面主色与动效档位（`data-nova-accent` / `data-nova-motion`），
+   偏好放 localStorage，首帧由 `APPEARANCE_BOOTSTRAP` 内联脚本落到 `<html>`。
 4. **不在页面里写 `fetch`**。数据访问的边界是 `src/lib/nova/`。
 5. **改评分口径必须同步改标准文档**。`docs/nova-standard.md` 第 8 节维护了
    标准条款与代码位置的对应表。
+6. **本地 Agent 只进 `src/lib/nova/local-agents.ts` 的 `LOCAL_AGENTS`**。
+   密钥永远只存环境变量名，不落进档案；未跑完验证的本地 Agent 不进排行榜与矩阵，
+   不编造综合评分。
 
 ---
 
@@ -94,6 +102,8 @@ npm run build      # 生产构建（同时校验类型）
 | `PULSAR` 等档案的子项读数为 0 | 未完成验证，刻意留空 | 该 Agent 真正跑完验证后 |
 | 报告导出走 `Blob` + `ObjectURL` | 仅前端下载，无后端存档 | 需要服务端归档时 |
 | 沙盒剧本为同步生成 | 步数多时会一次性生成较长数组 | 单次运行超过 200 步时 |
+| 真实执行器按 `LLM_*` 环境变量绑定单端点 | 多 Agent 本地编排需要注册表持久化 | 需要同时跑多个本地端点时 |
+| 本地 Agent 无历史评测记录 | 只能进入沙盒跑全新验证，无法查看对比 | 接入验证结果存储后 |
 
 <!-- BEGIN:nextjs-agent-rules -->
 

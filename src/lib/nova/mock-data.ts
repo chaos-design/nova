@@ -1,5 +1,5 @@
 import { DEMO_EPOCH } from "./constants";
-import { clamp, round } from "./format";
+import { clamp, formatClock, formatYear, round } from "./format";
 import { compositeScore, gradeOf } from "./scoring";
 import type {
   AgentProfile,
@@ -34,13 +34,9 @@ function noise(seed: number): number {
   return x - Math.floor(x);
 }
 
-/** 相对锚点的 `HH:mm:ss` 标签 */
+/** 相对锚点的 `HH:mm:ss` 标签，复用领域层的北京时间口径 */
 function clockAt(minutes: number): string {
-  const date = new Date(EPOCH_MS + minutes * 60_000);
-  const pad = (input: number) => String(input).padStart(2, "0");
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(
-    date.getSeconds(),
-  )}`;
+  return formatClock(atOffset(minutes));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -118,9 +114,7 @@ function createAgent(seed: AgentSeed): AgentProfile {
     compositeScore: composite,
     grade,
     certificateId: issued
-      ? `NOVA-CERT-${new Date(DEMO_EPOCH).getUTCFullYear()}-${String(
-          seed.certificateSeq,
-        ).padStart(4, "0")}`
+      ? `NOVA-CERT-${formatYear(DEMO_EPOCH)}-${String(seed.certificateSeq).padStart(4, "0")}`
       : null,
     tagline: seed.tagline,
   };

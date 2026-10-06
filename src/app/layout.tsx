@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { NOVA_BRAND } from "@/lib/nova";
+import { APPEARANCE_BOOTSTRAP, NOVA_BRAND } from "@/lib/nova";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -36,6 +36,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body
         className={`${geistSans.variable} ${geistMono.variable} min-h-full antialiased`}
       >
+        {/* 主色与动效必须在首帧前落到 <html> 上，否则会先闪一次默认配色 */}
+        <script
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: 引导脚本必须是同步内联的，放到外部文件会晚于首帧
+          dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOTSTRAP }}
+        />
         <TooltipProvider delayDuration={200}>{children}</TooltipProvider>
       </body>
     </html>

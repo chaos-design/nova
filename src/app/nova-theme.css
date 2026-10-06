@@ -67,7 +67,118 @@
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* 界面主色                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 界面主色与霓虹色板是两件事：
+ *
+ * - `--nova-cyan` 等六个色板是**数据语义色**：自主性=青、混沌异常=玫红、
+ *   日志成功=青。换掉它们等于篡改读数含义，因此永远固定。
+ * - `--nova-accent` 是**界面主色**：只作用于导航、焦点环、主按钮、网格与
+ *   星云辉光这类"外壳"元素，不参与任何语义编码。
+ *
+ * 拆成两层之后，"换个主色"才不会牵连图表的读法。深空配色本身保持唯一，
+ * 与 docs/architecture.md §7.1 的决策不冲突。
+ */
+
+/* 无 JS 时的兜底：引导脚本正常运行时会被下面的预设覆写 */
+:root {
+  --nova-accent: oklch(0.815 0.132 197);
+  --nova-accent-2: oklch(0.672 0.196 296);
+}
+
+/*
+ * 主色预设。
+ *
+ * 每个预设给出**调过明度**的主色而不是直接引用色板：色板里的紫、品红、玫红
+ * 明度偏低（oklch L≈0.67~0.70），直接当按钮底色时前景文字对比度不足；
+ * 抬到 L≈0.79 之后深色前景才稳定在 4.5:1 以上。
+ *
+ * 选择器刻意不带元素名：任何元素只要声明 `data-nova-accent` 就能在自己的
+ * 子树里取到该预设的颜色，界面设置里的色块正是这么用的。
+ */
+[data-nova-accent="cyan"] {
+  --nova-accent: oklch(0.815 0.132 197);
+  --nova-accent-2: oklch(0.672 0.196 296);
+}
+
+[data-nova-accent="violet"] {
+  --nova-accent: oklch(0.79 0.155 296);
+  --nova-accent-2: oklch(0.702 0.208 338);
+}
+
+[data-nova-accent="fuchsia"] {
+  --nova-accent: oklch(0.79 0.16 338);
+  --nova-accent-2: oklch(0.688 0.198 16);
+}
+
+[data-nova-accent="sky"] {
+  --nova-accent: oklch(0.8 0.13 232);
+  --nova-accent-2: oklch(0.815 0.132 197);
+}
+
+[data-nova-accent="amber"] {
+  --nova-accent: oklch(0.82 0.15 78);
+  --nova-accent-2: oklch(0.688 0.198 16);
+}
+
+[data-nova-accent="rose"] {
+  --nova-accent: oklch(0.79 0.16 16);
+  --nova-accent-2: oklch(0.702 0.208 338);
+}
+
+/**
+ * 把 shadcn 的交互态令牌接到 NOVA 主色上。
+ *
+ * 两个刻意的选择：
+ * - 写在 nova-theme.css 而不是 globals.css —— 后者归 shadcn CLI 托管，
+ *   一次 `add` / `migrate` 就可能把这些值覆盖回中性色。
+ * - 选择器带 `html` —— globals.css 的 `:root` 特异度是 (0,1,0) 且位置更靠后，
+ *   同特异度的规则会被它整块压回去；`html[...]` 是 (0,1,1)，稳定胜出。
+ */
+html[data-nova-accent] {
+  --primary: var(--nova-accent);
+  --primary-foreground: oklch(0.13 0.02 250);
+  --ring: color-mix(in oklab, var(--nova-accent) 62%, transparent);
+  --sidebar-primary: var(--nova-accent);
+  --sidebar-ring: color-mix(in oklab, var(--nova-accent) 62%, transparent);
+}
+
+/**
+ * 精简动效。
+ *
+ * 不只是关掉 NOVA 自己的动画：`animate-ping`、radix 的展开/收起过渡都来自
+ * 依赖包，只能用一条全局规则兜住。这里必须用 `!important` ——
+ * 那些动画声明写在工具类的同一层里，不加优先级压不住。
+ * （`biome.json` 已对 `noImportantStyles` 就本文件放行，理由同上。）
+ */
+[data-nova-motion="reduced"],
+[data-nova-motion="reduced"] * {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/** 系统层面的减弱动效偏好同样生效：精简档位只是把它显式化 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @theme inline {
+  /* 界面主色：由 [data-nova-accent] 预设覆写 */
+  --color-nova-accent: var(--nova-accent);
+  --color-nova-accent-2: var(--nova-accent-2);
+
   /* 霓虹色板：青 / 紫 / 品红 / 天蓝 / 琥珀 / 玫红 */
   --color-nova-cyan: var(--nova-cyan);
   --color-nova-violet: var(--nova-violet);
@@ -89,18 +200,18 @@
 /* 工具类                                                                      */
 /* -------------------------------------------------------------------------- */
 
-/** 星空底色：深空径向渐变 + 青色/紫色星云辉光 */
+/** 星空底色：深空径向渐变 + 主色/副色星云辉光 */
 @utility nova-backdrop {
   background-color: var(--nova-void);
   background-image:
     radial-gradient(
       120rem 60rem at 12% -10%,
-      color-mix(in oklab, var(--nova-cyan) 14%, transparent),
+      color-mix(in oklab, var(--nova-accent) 14%, transparent),
       transparent 60%
     ),
     radial-gradient(
       90rem 55rem at 92% 4%,
-      color-mix(in oklab, var(--nova-violet) 15%, transparent),
+      color-mix(in oklab, var(--nova-accent-2) 15%, transparent),
       transparent 62%
     ),
     radial-gradient(
@@ -115,12 +226,12 @@
   background-image:
     linear-gradient(
       to right,
-      color-mix(in oklab, var(--nova-cyan) 12%, transparent) 1px,
+      color-mix(in oklab, var(--nova-accent) 12%, transparent) 1px,
       transparent 1px
     ),
     linear-gradient(
       to bottom,
-      color-mix(in oklab, var(--nova-cyan) 12%, transparent) 1px,
+      color-mix(in oklab, var(--nova-accent) 12%, transparent) 1px,
       transparent 1px
     );
   background-size: 56px 56px;
@@ -131,7 +242,7 @@
 @utility nova-panel {
   background-color: color-mix(in oklab, var(--card) 78%, transparent);
   backdrop-filter: blur(14px);
-  border: 1px solid color-mix(in oklab, var(--nova-cyan) 12%, transparent);
+  border: 1px solid color-mix(in oklab, var(--nova-accent) 12%, transparent);
 }
 
 /** 霓虹文字 */
@@ -146,8 +257,8 @@
   background-image: linear-gradient(
     to right,
     transparent,
-    color-mix(in oklab, var(--nova-cyan) 42%, transparent),
-    color-mix(in oklab, var(--nova-violet) 34%, transparent),
+    color-mix(in oklab, var(--nova-accent) 42%, transparent),
+    color-mix(in oklab, var(--nova-accent-2) 34%, transparent),
     transparent
   );
 }
