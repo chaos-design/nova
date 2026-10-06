@@ -11,7 +11,7 @@ import {
 export const metadata: Metadata = {
   title: "沙盒模拟器",
   description:
-    "自定义系统提示词、注入混沌故障并实时观察 Agent 的自我纠错过程。",
+    "自定义系统提示词、注入混沌故障并实时观察 Agent 的自我纠错过程。支持本地仿真与真实模型执行两种执行器。",
 };
 
 /**
@@ -19,17 +19,26 @@ export const metadata: Metadata = {
  *
  * 页面本身只做取数与说明，真正的交互（配置 → 剧本 → 播放）
  * 全部收敛在 `SandboxPlayground` 这一个客户端组件里。
+ *
+ * 「真实执行是否可用」必须在服务端判定：密钥只存在于服务端环境变量，
+ * 客户端最多只能知道一个布尔值。
  */
 export default function SandboxPage() {
+  const liveAvailable = Boolean(
+    process.env.LLM_BASE_URL &&
+      process.env.LLM_API_KEY &&
+      process.env.LLM_MODEL,
+  );
+
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Sandbox Simulator"
         title="沙盒模拟器"
-        subtitle="选定 Agent、写下系统提示词、注入网络延迟或畸形载荷，然后观察它如何在失败中自我纠正。剧本完全由配置推导，同一份配置永远得到同一次运行。"
+        subtitle="选定 Agent、写下系统提示词、注入网络延迟或畸形载荷，然后观察它如何在失败中自我纠正。两种执行器共用同一套混沌规则与评分口径，因此分数可以直接对照。"
       />
 
-      <SandboxPlayground agents={AGENTS} />
+      <SandboxPlayground agents={AGENTS} liveAvailable={liveAvailable} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="nova-panel rounded-xl p-4 lg:col-span-2">

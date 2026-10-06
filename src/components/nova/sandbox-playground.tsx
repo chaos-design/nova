@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "cn";
-import { Play, RotateCcw, ShieldAlert, Sparkles } from "lucide-react";
+import { Play, RotateCcw, ShieldAlert, Sparkles, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AgentIdentity } from "@/components/nova/agent-identity";
 import { LogStream } from "@/components/nova/log-stream";
@@ -27,26 +27,27 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { useSimulationRun } from "@/hooks/use-simulation-run";
-import type { ScriptStep, SimulationPlan } from "@/lib/nova";
+import { useSandboxRun } from "@/hooks/use-sandbox-run";
 import {
   agentById,
   buildSimulationPlan,
   CHAOS_KINDS,
   DEFAULT_SIMULATION_CONFIG,
   ENVIRONMENTS,
-  formatDuration,
   gradeMeta,
   gradeOf,
   MODEL_REGISTRY,
   resilienceFactor,
 } from "@/lib/nova";
+import type { ExecutorId } from "@/lib/nova/executor";
 import type {
   AgentProfile,
   ChaosInjection,
   ChaosKind,
   SimulationConfig,
+  SimulationLog,
 } from "@/lib/nova/types";
 
 /** 混沌强度的上限（滑块最大值） */
@@ -64,26 +65,30 @@ const INTENSITY_MAX = 100;
  */
 export function SandboxPlayground({
   agents,
+  liveAvailable,
 }: {
   agents: readonly AgentProfile[];
+  /** 服务端是否配置了真实模型；由页面在服务端判定后传入 */
+  liveAvailable: boolean;
 }) {
   const [config, setConfig] = useState<SimulationConfig>(() =>
     defaultConfig(agents[0]?.id ?? ""),
   );
+  const [executor, setExecutor] = useState<ExecutorId>("simulation");
 
   const agent = agentById(config.agentId);
-  const plan = useMemo(
-    () => buildSimulationPlan(config, agent),
-    [config, agent],
-  );
-  const run = useSimulationRun(plan);
+  const run = useSandboxRun();
 
   const environment = ENVIRONMENTS.find(
     (item) => item.id === config.environment,
   );
   const model = MODEL_REGISTRY.find((item) => item.id === agent.model);
-  const faultCount = plan.steps.filter((step) => step.chaos).length;
-  const totalDuration = plan.steps.reduce((sum, step) => sum + step.delayMs, 0);
+  /** 计划中的故障点数量：仅本地仿真可预先算出 */
+  const faultCount = useMemo(
+    () =>
+      buildSimulationPlan(config, agent).steps.filter((s) => s.chaos).length,
+    [config, agent],
+  );
 
   const patch = (changes: Partial<SimulationConfig>) =>
     setConfig((prev) => ({ ...prev, ...changes }));
@@ -98,6 +103,14 @@ export function SandboxPlayground({
 
   const running = run.status === "running";
 
+  const start = () => {
+    if (executor === "live") {
+      void run.runRemote(config, agent);
+      return;
+    }
+    void run.runLocal(config, agent);
+  };
+
   return (
     <div className="space-y-4">
       <div className="grid items-start gap-4 xl:grid-cols-[22rem_minmax(0,1fr)]">
@@ -111,6 +124,41 @@ export function SandboxPlayground({
           </CardHeader>
 
           <CardContent className="space-y-5">
+            <div className="space-y-2">
+              <Label>执行器</Label>
+              <Tabs
+                value={executor}
+                onValueChange={(value) => setExecutor(value as ExecutorId)}
+              >
+                <TabsList className="w-full">
+                  <TabsTrigger value="simulation" className="flex-1">
+                    本地仿真
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="live"
+                    className="flex-1"
+                    disabled={!liveAvailable}
+                  >
+                    真实执行
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+                {executor === "live"
+                  ? "真实调用大模型执行工具循环，混沌注入在服务端生效；结果完全取决于被测模型的真实行为。"
+                  : "按预生成剧本回放，无需网络与密钥，适合演示与回归对照。"}
+                {!liveAvailable && (
+                  <>
+                    {" "}
+                    <span className="text-nova-amber">
+                      真实执行需要在 .env.local 配置 LLM_BASE_URL / LLM_API_KEY
+                      / LLM_MODEL。
+                    </span>
+                  </>
+                )}
+              </p>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="sandbox-agent">目标 Agent</Label>
               <Select
@@ -226,9 +274,18 @@ export function SandboxPlayground({
             <CardHeader>
               <CardTitle>运行控制台</CardTitle>
               <CardDescription>
-                {plan.steps.length} 步 · 预计耗时{" "}
-                {formatDuration(totalDuration)} ·{" "}
-                {running ? "正在执行" : "待运行"}
+                {executor === "live" ? "真实执行" : "本地仿真"} ·{" "}
+                {executor === "live"
+                  ? (run.meta?.model ?? "等待投放")
+                  : `${config.maxSteps} 轮`}{" "}
+                ·{" "}
+                {running
+                  ? "正在执行"
+                  : run.status === "completed"
+                    ? "已结束"
+                    : run.status === "failed"
+                      ? "执行失败"
+                      : "待运行"}
               </CardDescription>
               <CardAction>
                 <div className="flex items-center gap-2">
@@ -241,10 +298,17 @@ export function SandboxPlayground({
                     <RotateCcw />
                     重置
                   </Button>
-                  <Button size="sm" onClick={run.start} disabled={running}>
-                    <Play />
-                    开始模拟
-                  </Button>
+                  {running ? (
+                    <Button size="sm" variant="secondary" onClick={run.stop}>
+                      <Square />
+                      中止
+                    </Button>
+                  ) : (
+                    <Button size="sm" onClick={start}>
+                      <Play />
+                      开始模拟
+                    </Button>
+                  )}
                 </div>
               </CardAction>
             </CardHeader>
@@ -267,9 +331,9 @@ export function SandboxPlayground({
                 <div className="w-full flex-1 space-y-3">
                   <div>
                     <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted-foreground">执行进度</span>
+                      <span className="text-muted-foreground">执行轮次</span>
                       <span className="font-mono tabular-nums text-foreground">
-                        {run.played} / {run.total}
+                        {run.round} / {run.total || config.maxSteps}
                       </span>
                     </div>
                     <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/6">
@@ -281,35 +345,37 @@ export function SandboxPlayground({
                   </div>
 
                   <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                    <Stat
-                      label="反思轮次"
-                      value={countSteps(
-                        plan,
-                        run.cursor,
-                        (step) => step.reflection === true,
-                      )}
-                    />
+                    <Stat label="反思轮次" value={countBy(run.logs)} />
                     <Stat
                       label="已注入故障"
-                      value={countSteps(
-                        plan,
-                        run.cursor,
-                        (step) => step.chaos !== undefined,
-                      )}
+                      value={
+                        run.logs.filter(
+                          (log) =>
+                            log.level === "error" || log.level === "warn",
+                        ).length
+                      }
                       accent="rose"
                     />
                     <Stat
                       label="已自愈"
-                      value={countSteps(
-                        plan,
-                        run.cursor,
-                        (step) =>
-                          step.chaos !== undefined && step.level === "success",
-                      )}
+                      value={run.result?.reflections ?? 0}
                       accent="cyan"
                     />
-                    <Stat label="剧本步数" value={run.total} />
+                    <Stat label="日志条数" value={run.played} />
                   </dl>
+
+                  {run.error && (
+                    <div className="rounded-lg border border-nova-rose/30 bg-nova-rose/6 p-3 text-xs leading-relaxed">
+                      <p className="font-medium text-nova-rose">
+                        {run.error.message}
+                      </p>
+                      {run.error.hint && (
+                        <p className="mt-1 text-muted-foreground">
+                          {run.error.hint}
+                        </p>
+                      )}
+                    </div>
+                  )}
 
                   {run.result && (
                     <div
@@ -332,10 +398,15 @@ export function SandboxPlayground({
                         {run.result.success ? "任务达成" : "任务未达成"}
                       </p>
                       <p className="mt-1.5 text-muted-foreground">
-                        {run.result.success
-                          ? `在 ${environment?.label}中完成 ${run.result.steps} 步执行，通过 ${run.result.reflections} 次自我纠错。`
-                          : "该 Agent 在当前混沌强度下未能自愈，请降低注入强度或更换模型。"}
+                        {run.result.summary}
                       </p>
+                      {run.result.usage && (
+                        <p className="mt-1.5 font-mono text-[0.6875rem] text-muted-foreground/80">
+                          模型调用 {run.result.usage.calls} 次 · 输入{" "}
+                          {run.result.usage.promptTokens} tokens · 输出{" "}
+                          {run.result.usage.completionTokens} tokens
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -349,6 +420,16 @@ export function SandboxPlayground({
               <CardDescription>
                 实时观察 Agent 的规划、工具调用与自我纠错过程
               </CardDescription>
+              {executor === "live" && run.meta && (
+                <CardAction>
+                  <Badge
+                    variant="outline"
+                    className="font-mono text-[0.625rem]"
+                  >
+                    {run.meta.model}
+                  </Badge>
+                </CardAction>
+              )}
             </CardHeader>
             <CardContent>
               <LogStream
@@ -499,16 +580,7 @@ function Stat({
   );
 }
 
-/** 统计已播放的剧本步骤中满足条件的数量 */
-function countSteps(
-  plan: SimulationPlan,
-  cursor: number,
-  predicate: (step: ScriptStep) => boolean,
-): number {
-  let count = 0;
-  for (const step of plan.steps) {
-    if (step.step > cursor) break;
-    if (predicate(step)) count += 1;
-  }
-  return count;
+/** 按日志级别统计数量 */
+function countBy(logs: readonly SimulationLog[]): number {
+  return logs.filter((log) => log.level === "reflect").length;
 }
