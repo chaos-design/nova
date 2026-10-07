@@ -1,7 +1,9 @@
 import type { LiveRunRequest, SandboxEvent } from "@/lib/nova/executor";
 import { runLive } from "@/lib/nova/executors/live";
-import { LlmError, readLlmSettings } from "@/lib/nova/executors/llm";
+import { type LlmSettings, readLlmSettings } from "@/lib/nova/executors/llm";
+import { localAgentById, localAgentProfile } from "@/lib/nova/local-agents";
 import { agentById } from "@/lib/nova/mock-data";
+import type { AgentProfile } from "@/lib/nova/types";
 
 /**
  * 真实沙盒执行接口。
@@ -20,14 +22,9 @@ export const maxDuration = 120;
 const MAX_BODY_BYTES = 32_768;
 
 export async function POST(request: Request) {
+  // 全局配置是内置 Agent 的运行配置；本地 Agent 有自己完整的运行配置，
+  // 因此这里的 settings 允许为 null，而在分流后按需判定是否缺失。
   const settings = readLlmSettings();
-
-  if (!settings) {
-    return jsonError(
-      "真实执行器未配置",
-      "请在 .env.local 中设置 LLM_BASE_URL、LLM_API_KEY、LLM_MODEL 后重启开发服务器。",
-    );
-  }
 
   let payload: LiveRunRequest;
 
@@ -51,11 +48,38 @@ export async function POST(request: Request) {
 
   // Agent 档案由服务端按 id 反查：绝不相信客户端传来的档案内容，
   // 否则评分就变成了"客户端自己给自己打分"。
-  let agentId: string;
-  try {
-    agentId = agentById(payload.agentId).id;
-  } catch {
-    return jsonError(`未注册的 Agent：${payload.agentId}`, undefined, 400);
+  // 内置 Agent 用全局 LLM_* 配置；本地 Agent 用它自己登记的端点/模型与
+  // 它自己的密钥环境变量（找不到时降级为无鉴权调用，Ollama 等可跑通）。
+  const localEntry = localAgentById(payload.agentId);
+
+  let profile: AgentProfile;
+  let effectiveSettings: LlmSettings | null;
+
+  if (localEntry) {
+    profile = localAgentProfile(localEntry);
+    // 密钥仍只来自服务端环境变量；登记侧给的是变量名，不是值
+    effectiveSettings = {
+      baseUrl: localEntry.endpoint,
+      apiKey:
+        process.env[localEntry.apiKeyEnv]?.trim() ??
+        process.env.LLM_API_KEY?.trim() ??
+        "",
+      model: localEntry.model,
+      maxTokens: Number(process.env.LLM_MAX_TOKENS) || 2_000,
+    };
+  } else {
+    try {
+      profile = agentById(payload.agentId);
+    } catch {
+      return jsonError(`未注册的 Agent：${payload.agentId}`, undefined, 400);
+    }
+    if (!settings) {
+      return jsonError(
+        "真实执行器未配置",
+        "请在 .env.local 中设置 LLM_BASE_URL、LLM_MODEL 后重启开发服务器；也可以在 local-agents.ts 登记一个本地 Agent。",
+      );
+    }
+    effectiveSettings = settings;
   }
 
   const encoder = new TextEncoder();
@@ -69,9 +93,9 @@ export async function POST(request: Request) {
 
       try {
         for await (const event of runLive(
-          { ...config.value, agentId },
-          agentById(agentId),
-          settings,
+          { ...config.value, agentId: profile.id },
+          profile,
+          effectiveSettings,
           request.signal,
         )) {
           send(event);

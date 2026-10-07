@@ -157,7 +157,7 @@ export function useSandboxRun() {
 
   /** 真实执行器：单次 POST + SSE 流式读取 */
   const runRemote = useCallback(
-    async (config: SimulationConfig, agent: AgentProfile) => {
+    async (config: SimulationConfig) => {
       const controller = prepare();
 
       try {

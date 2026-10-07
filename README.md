@@ -51,7 +51,9 @@ NOVA 平台扮演的角色与之对应 —— 作为 AI 的**宇宙催化剂**�
 - **全局搜索（⌘K / Ctrl+K）**：搜索页面、Agent 档案与评测口径名词，键盘完成全部操作；
 - **界面设置**：深空唯一配色内可切换界面主色与动效档位，偏好本机持久化；
 - **本地 Agent 接入**：注册表页一键打开三步向导（端点准备 → 档案登记 → 落地配置），
-  服务端实时探测 OpenAI 兼容端点可达性；本地档案通过 `src/lib/nova/local-agents.ts` 登记。
+  服务端实时探测 OpenAI 兼容端点可达性；本地档案通过 `src/lib/nova/local-agents.ts` 登记；
+- **沙盒本地试验**：沙盒模拟器支持选择已登记的本地 Agent，用它登记的端点/模型
+  走真实的工具调用循环，内置 Agent 仍可切换全局 `LLM_*` 配置跑同一套混沌口径。
 
 ---
 
@@ -77,7 +79,7 @@ NOVA 平台扮演的角色与之对应 —— 作为 AI 的**宇宙催化剂**�
 # 安装依赖
 npm install
 
-# 启动开发服务器（默认 http://localhost:3000）
+# 启动开发服务器（默认 http://localhost:3234）
 npm run dev
 
 # 生产构建并启动
@@ -85,7 +87,7 @@ npm run build
 npm run start
 ```
 
-打开浏览器访问 [http://localhost:3000](http://localhost:3000)，根路径会自动跳转到 `/dashboard`。
+打开浏览器访问 [http://localhost:3234](http://localhost:3234)，根路径会自动跳转到 `/dashboard`。
 
 ---
 

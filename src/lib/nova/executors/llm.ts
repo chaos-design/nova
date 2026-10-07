@@ -62,11 +62,11 @@ export function readLlmSettings(): LlmSettings | null {
   const apiKey = process.env.LLM_API_KEY?.trim();
   const model = process.env.LLM_MODEL?.trim();
 
-  if (!baseUrl || !apiKey || !model) return null;
+  if (!baseUrl || !model) return null;
 
   return {
     baseUrl: baseUrl.replace(/\/+$/, ""),
-    apiKey,
+    apiKey: apiKey ?? "",
     model,
     maxTokens: Number(process.env.LLM_MAX_TOKENS ?? 2_000),
   };
@@ -100,7 +100,10 @@ export async function chatCompletion(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${settings.apiKey}`,
+        // 本地服务（Ollama 等）没有密钥要求：非空才带 Authorization
+        ...(settings.apiKey
+          ? { Authorization: `Bearer ${settings.apiKey}` }
+          : {}),
       },
       body: JSON.stringify({
         model: settings.model,

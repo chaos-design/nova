@@ -53,7 +53,7 @@ export function NovaSidebar({
     <aside
       data-collapsed={collapsed}
       className={cn(
-        "sticky top-16 hidden h-[calc(100svh-4rem)] shrink-0 flex-col border-r border-white/8 bg-sidebar/70 backdrop-blur-xl transition-[width] duration-200 lg:flex",
+        "sticky top-0 hidden h-svh shrink-0 flex-col overflow-hidden border-r border-white/8 bg-sidebar/70 backdrop-blur-xl transition-[width] duration-200 lg:flex",
         collapsed ? "w-16" : "w-64",
         className,
       )}

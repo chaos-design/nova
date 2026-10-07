@@ -38,6 +38,8 @@ import {
   ENVIRONMENTS,
   gradeMeta,
   gradeOf,
+  type LocalAgentEntry,
+  localAgentProfile,
   MODEL_REGISTRY,
   resilienceFactor,
 } from "@/lib/nova";
@@ -66,17 +68,28 @@ const INTENSITY_MAX = 100;
 export function SandboxPlayground({
   agents,
   liveAvailable,
+  localAgents = [],
 }: {
   agents: readonly AgentProfile[];
   /** 服务端是否配置了真实模型；由页面在服务端判定后传入 */
   liveAvailable: boolean;
+  /** 已登记的本地 Agent（可在沙盒里做真实试验） */
+  localAgents?: readonly LocalAgentEntry[];
 }) {
   const [config, setConfig] = useState<SimulationConfig>(() =>
     defaultConfig(agents[0]?.id ?? ""),
   );
   const [executor, setExecutor] = useState<ExecutorId>("simulation");
 
-  const agent = agentById(config.agentId);
+  // 选中的可能是内置 Agent，也可能是本地登记；两者在这里收敛成同一个 Profile
+  const localEntry = localAgents.find((item) => item.id === config.agentId);
+  const agent = localEntry
+    ? localAgentProfile(localEntry)
+    : agentById(config.agentId);
+  const isLocalRun = localEntry !== undefined;
+  // 本地 Agent 一定可以走真实执行（端点自己的可达性由探针预先确认）；
+  // 内置 Agent 只有服务端配置了全局 LLM_* 才可用
+  const liveEnabled = isLocalRun || liveAvailable;
   const run = useSandboxRun();
 
   const environment = ENVIRONMENTS.find(
@@ -105,7 +118,8 @@ export function SandboxPlayground({
 
   const start = () => {
     if (executor === "live") {
-      void run.runRemote(config, agent);
+      // 档案由服务端按 agentId 反查，客户端只传 id
+      void run.runRemote(config);
       return;
     }
     void run.runLocal(config, agent);
@@ -137,7 +151,7 @@ export function SandboxPlayground({
                   <TabsTrigger
                     value="live"
                     className="flex-1"
-                    disabled={!liveAvailable}
+                    disabled={!liveEnabled}
                   >
                     真实执行
                   </TabsTrigger>
@@ -147,12 +161,19 @@ export function SandboxPlayground({
                 {executor === "live"
                   ? "真实调用大模型执行工具循环，混沌注入在服务端生效；结果完全取决于被测模型的真实行为。"
                   : "按预生成剧本回放，无需网络与密钥，适合演示与回归对照。"}
-                {!liveAvailable && (
+                {isLocalRun && (
+                  <span className="text-nova-cyan">
+                    {" "}
+                    本地试验：将调用 {localEntry.endpoint} 的 {localEntry.model}
+                    模型（密钥取自环境变量 {localEntry.apiKeyEnv}）。
+                  </span>
+                )}
+                {!liveEnabled && (
                   <>
                     {" "}
                     <span className="text-nova-amber">
-                      真实执行需要在 .env.local 配置 LLM_BASE_URL / LLM_API_KEY
-                      / LLM_MODEL。
+                      真实执行需要在 .env.local 配置 LLM_BASE_URL / LLM_MODEL，
+                      或在 local-agents.ts 登记一个本地 Agent。
                     </span>
                   </>
                 )}
@@ -177,6 +198,15 @@ export function SandboxPlayground({
                       </SelectItem>
                     ))}
                   </SelectGroup>
+                  {localAgents.length > 0 && (
+                    <SelectGroup>
+                      {localAgents.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.name} · {item.codename} · {item.model}（本地）
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -196,8 +226,9 @@ export function SandboxPlayground({
                   模型
                 </span>
                 <span className="truncate font-mono text-[0.6875rem] text-foreground/90">
-                  {model?.label ?? agent.model} · {model?.contextWindow ?? "-"}{" "}
-                  ctx
+                  {model
+                    ? `${model.label} · ${model.contextWindow} ctx`
+                    : `${agent.model} · 本地端点`}
                 </span>
               </div>
             </div>

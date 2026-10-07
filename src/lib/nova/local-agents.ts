@@ -1,3 +1,7 @@
+import { CAPABILITY_VECTOR_IDS } from "./constants";
+import { compositeScore, gradeOf } from "./scoring";
+import type { AgentProfile, CapabilityScore, MetricReading } from "./types";
+
 /**
  * 本地 Agent 注册点。
  *
@@ -41,13 +45,67 @@ export interface LocalAgentEntry {
   registeredAt: string;
 }
 
-/**
- * 已登记的本地 Agent。
+/** 已登记的本地 Agent。
  *
  * 默认留空：`local-agents.example.ts` 里有可直接粘贴的模板。
  * 有真实接入需求时在这里追加即可，注册表会自动多出一张本地档案卡。
  */
-export const LOCAL_AGENTS: readonly LocalAgentEntry[] = [];
+export const LOCAL_AGENTS: readonly LocalAgentEntry[] = [
+  {
+    id: "agt-local-solver",
+    name: "SOLVER",
+    codename: "本地试验体",
+    model: "qwen2.5:14b",
+    owner: "本地开发",
+    version: "v0.1.0",
+    endpoint: "http://127.0.0.1:11434/v1",
+    apiKeyEnv: "LLM_API_KEY",
+    tagline: "接入试验样例：Ollama 本地部署，跑真实工具调用与混沌注入",
+    registeredAt: "2026-10-06T06:00:00.000Z",
+  },
+];
+
+/** 按 id 查本地 Agent，找不到返回 undefined（不抛错：登记是可选注入） */
+export function localAgentById(id: string): LocalAgentEntry | undefined {
+  return LOCAL_AGENTS.find((item) => item.id === id);
+}
+
+/**
+ * 为沙盒执行派生档案。
+ *
+ * 执行器（`runLive` / `buildSimulationPlan`）需要一个 `AgentProfile` 才能
+ * 计算韧性与推理返还。本地 Agent 没有真实评测读数，因此能力向量取**中性先验**
+ * （70 分、空读数、delta=0）——它只参与执行中的启发式估计，
+ * 不会被当作评测结论展示：本地档案的卡片只显示端点/模型/登记信息。
+ */
+export function localAgentProfile(entry: LocalAgentEntry): AgentProfile {
+  // 全部向量取中性先验 70 分，评级由同一套逻辑派生而不是手填
+  const vectors: CapabilityScore[] = CAPABILITY_VECTOR_IDS.map((vectorId) => ({
+    vector: vectorId,
+    score: 70,
+    delta: 0,
+    readings: [] as MetricReading[],
+  }));
+  const composite = compositeScore(vectors);
+
+  return {
+    id: entry.id,
+    name: entry.name,
+    codename: entry.codename,
+    model: entry.model,
+    owner: entry.owner,
+    version: entry.version,
+    status: "queued",
+    registeredAt: entry.registeredAt,
+    lastVerifiedAt: null,
+    scenarios: { passed: 0, total: 50 },
+    capabilities: vectors,
+    compositeScore: composite,
+    grade: gradeOf(composite),
+    certificateId: null,
+    tagline: entry.tagline,
+  };
+}
 
 /** 端点规范化：去掉末尾斜杠，保证与执行器的拼接方式一致 */
 export function normalizeEndpoint(endpoint: string): string {

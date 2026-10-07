@@ -6,6 +6,7 @@ import {
   CHAOS_KINDS,
   DEFAULT_SIMULATION_CONFIG,
   ENVIRONMENTS,
+  LOCAL_AGENTS,
 } from "@/lib/nova";
 
 export const metadata: Metadata = {
@@ -24,11 +25,9 @@ export const metadata: Metadata = {
  * 客户端最多只能知道一个布尔值。
  */
 export default function SandboxPage() {
-  const liveAvailable = Boolean(
-    process.env.LLM_BASE_URL &&
-      process.env.LLM_API_KEY &&
-      process.env.LLM_MODEL,
-  );
+  const liveAvailable =
+    Boolean(process.env.LLM_BASE_URL && process.env.LLM_MODEL) ||
+    LOCAL_AGENTS.some((entry) => entry.endpoint.trim().length > 0);
 
   return (
     <div className="space-y-6">
@@ -38,7 +37,11 @@ export default function SandboxPage() {
         subtitle="选定 Agent、写下系统提示词、注入网络延迟或畸形载荷，然后观察它如何在失败中自我纠正。两种执行器共用同一套混沌规则与评分口径，因此分数可以直接对照。"
       />
 
-      <SandboxPlayground agents={AGENTS} liveAvailable={liveAvailable} />
+      <SandboxPlayground
+        agents={AGENTS}
+        liveAvailable={liveAvailable}
+        localAgents={LOCAL_AGENTS}
+      />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="nova-panel rounded-xl p-4 lg:col-span-2">
