@@ -7,39 +7,55 @@
 
 ## 1. 分层
 
-```text
-┌─────────────────────────────────────────────────────────┐
-│  页面层    src/app/(nova)/*/page.tsx        Server Component │
-│            取数、组装、首屏渲染                              │
-├─────────────────────────────────────────────────────────┤
-│  组件层    src/components/layout  外壳（服务端 + 少量客户端）  │
-│            src/components/nova    领域组件（按需 "use client"）│
-│            src/components/ui      shadcn CLI 托管，勿手改     │
-├─────────────────────────────────────────────────────────┤
-│  Hook 层   src/hooks                时间推进型状态机           │
-├─────────────────────────────────────────────────────────┤
-│  领域层    src/lib/nova             类型 / 常量 / 评分 / 剧本   │
-│            无 React 依赖，可在任何环境运行                    │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph SERVER["Next.js 服务端"]
+        P["页面层 · src/app/(nova)/*/page.tsx<br/>Server Component：取数 · 组装 · 首屏渲染"]
+        RH["Route Handler（无状态代理）<br/>POST /api/sandbox/run · POST /api/agents/probe"]
+        D["领域层 · src/lib/nova<br/>类型 / 常量 / 评分 / 剧本 / 报告 / 执行器<br/>无 React 依赖，任何环境可运行"]
+    end
+    subgraph CLIENT["浏览器"]
+        C["组件层<br/>layout 外壳 · nova 领域组件 · ui（shadcn 托管）"]
+        H["Hook 层 · src/hooks<br/>时间推进型状态机"]
+    end
+    E["外部 · OpenAI 兼容端点<br/>（本地 Agent / Ollama / vLLM …）"]
+
+    P -->|"props 传首屏数据"| C
+    C --> H
+    H -->|"纯函数调用"| D
+    P -->|"同步读取"| D
+    RH --> D
+    C -->|"fetch 仅限沙盒/探针"| RH
+    RH -->|"chat/completions · models"| E
 ```
 
 依赖方向严格单向向下。领域层不 import 任何组件或 hook，因此它可以被
 Server Component、Client Component、Route Handler、脚本任务复用。
+页面里唯一的 `fetch` 是沙盒执行与端点探针 —— 它们必须经过服务端（理由见下节）。
 
 ---
 
 ## 2. 数据流
 
-```text
-页面（Server Component）
-  │
-  ├─ 同步读取 lib/nova（纯函数，无 IO）
-  │     └─ 把数据作为 props 传给客户端组件
-  │
-  └─ 客户端组件（"use client"）
-        ├─ useTelemetryStream：定时推进遥测采样
-        ├─ useSimulationRun：定时推进剧本游标
-        └─ 交互态（选中、排序、复测结果）
+![遥测中枢：集群概览、四项核心指标与实时遥测曲线](images/dashboard.png)
+
+```mermaid
+flowchart TD
+    subgraph S["服务端（构建时 / 请求时各一次）"]
+        M["mock-data.ts<br/>确定性演示数据<br/>DEMO_EPOCH 锚点 + noise(seed)"]
+        LA["local-agents.ts<br/>本地 Agent 登记 → 中性先验档案"]
+    end
+    subgraph C["客户端"]
+        PG["页面 Server Component"]
+        H1["useTelemetryStream<br/>种子 + 游标推进遥测采样"]
+        H2["useSandboxRun<br/>统一消费两种执行器事件"]
+        I["交互态：排序 / 选中 / 复测结果"]
+    end
+    M -->|"纯函数直出"| PG
+    LA -->|"无评分档案卡"| PG
+    PG -->|"props（首屏数据）"| H1
+    PG -->|"props"| H2
+    PG --> I
 ```
 
 ### Route Handler 的位置
@@ -55,11 +71,63 @@ Route Handler 只做**无状态的服务端代理**，不保存、不编造任�
 
 - 密钥只存在于服务端环境变量（`readLlmSettings`），不能经过客户端；
 - Agent 端点通常监听 `127.0.0.1`，浏览器直连不了；
-- 向云厂商/本地模型发请求时由服务端统一处理超时与错误归一。
+- 向云厂商/本地模型发请求时由服务端统一处理超时与错误归一；
+- 探针是 SSRF 的天然入口，服务端统一实施黑名单与重定向拦截（见 §2.1）。
 
 **收益为零的事情不做**：所有页面数据仍由 `mock-data.ts` / `local-agents.ts`
 同步提供，首屏走 Server Component 直出，不绕 API。等真实后端就位时再把
 读路径换成 fetch，届时契约由 `src/lib/nova` 的类型定义直接生成。
+
+### 2.1 两条真实执行链路
+
+**端点探针**（接入向导第 2 步）：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 接入向导（浏览器）
+    participant P as POST /api/agents/probe
+    participant E as OpenAI 兼容端点
+    U->>P: { endpoint }
+    P->>P: URL 解析 · 协议白名单<br/>SSRF 黑名单（云元数据/整数 IP）
+    P->>E: GET {endpoint}/models<br/>4s 超时 · 不跟随重定向 · 响应 ≤ 64KB
+    E-->>P: 200 { data: [{ id }] }
+    P-->>U: { reachable, openaiCompatible, models, latencyMs }
+    Note over P,E: 3xx 显式拒绝 · 401/403 归为「可达但拒绝」· 超时给可读提示
+```
+
+**沙盒真实执行**（SSE 单请求流式返回）：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant H as useSandboxRun
+    participant R as POST /api/sandbox/run
+    participant X as runLive 执行器
+    participant T as 工具集（混沌代理）
+    participant M as 模型端点
+    H->>R: { agentId, systemPrompt, environment, chaos, maxSteps }
+    R->>R: 字节级限长 · chaos kind 白名单 · 步数钳制
+    R->>X: 反查档案（不信客户端档案）+ 组装 LlmSettings
+    X->>X: 静态提示词校验（失败即中止，不烧 token）
+    loop 每轮 ≤ maxSteps（服务端钳制 ≤ 20）
+        X->>M: chat/completions（tools · tool_choice=auto）
+        M-->>X: tool_calls / 最终结论
+        X->>T: executeTool(name, args, 注入故障?, 强度)
+        T-->>X: ToolOutcome（成功 / 混沌失败 / 带注入的内容）
+        X-->>H: SSE step 事件（scoreAfter = 结算后口径）
+        H-->>H: 收到 done/error 立即断流；页面卸载即 abort
+    end
+    X-->>H: done 事件（评分 · 反思 · 自愈清单 · token 用量）
+```
+
+![沙盒真实执行：STUB 在混沌注入下的完整事件流与评分](images/sandbox-live-run.png)
+
+客户端侧的生命周期约定（`use-sandbox-run.ts`）：
+
+- 组件卸载即 `AbortController.abort()`——离开页面不会留下继续烧 token 的流；
+- 「中止」产生独立的 `stopped` 状态，与「已结束」（自然完成）在界面上可区分；
+- 收到 `done` / `error` 事件后立即取消读取，不空转到 EOF。
 
 ---
 
@@ -77,6 +145,12 @@ NOVA 的做法是**一切由序号与锚点决定**：
 | **确定性伪随机** | `mock-data.ts` · `noise(seed)` | 三角函数哈希代替 `Math.random()`，同一 seed 结果恒定 |
 | **剧本推导** | `simulation.ts` · `buildSimulationPlan(config, agent)` | 同一份配置永远得到同一次运行，便于复现与对照实验 |
 | **派生而非硬编码** | `mock-data.ts` · `createAgent` 只写能力向量，综合评分 / 评级 / 证书编号全部派生 | 单一事实来源，改一个分数不会漏改三处 |
+
+交互态同样遵守确定性：能力矩阵的**复测抖动**由 `retestDelta(agentId, vector)`
+的字符串哈希推导（±1.5 分），同一格重复点击结果恒定；复测落回原位时，
+该行的综合评分由 `compositeScore` 实时重新派生，雷达图与拆解同步更新。
+
+![能力矩阵：Agent × 能力向量量表，点击单元格触发定向复测](images/matrix.png)
 
 ---
 

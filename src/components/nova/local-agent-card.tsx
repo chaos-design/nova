@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, Copy, ExternalLink, Terminal } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -77,10 +78,11 @@ export function LocalAgentCard({ agent }: { agent: LocalAgentEntry }) {
       <CardFooter className="gap-2">
         <EnvSnippetButton agent={agent} />
         <Button variant="ghost" size="sm" asChild className="ml-auto">
-          <a href="/sandbox">
+          {/* 站内路由用 Link：整页刷新会丢掉客户端状态，也绕过 typedRoutes */}
+          <Link href="/sandbox">
             去沙盒
             <ExternalLink data-icon="inline-end" />
-          </a>
+          </Link>
         </Button>
       </CardFooter>
     </Card>

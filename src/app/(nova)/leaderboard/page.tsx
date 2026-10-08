@@ -3,12 +3,12 @@ import type { Metadata } from "next";
 import { PageHeader } from "@/components/layout/page-header";
 import { LeaderboardTable } from "@/components/nova/leaderboard-table";
 import {
-  AGENTS,
   buildCertificates,
   buildLeaderboard,
   CAPABILITY_VECTORS,
   GRADE_THRESHOLDS,
 } from "@/lib/nova";
+import { rankSnapshot, verifiedAgents } from "@/lib/nova/run-store";
 
 export const metadata: Metadata = {
   title: "排行榜与报告",
@@ -16,10 +16,18 @@ export const metadata: Metadata = {
     "基于 NOVA 综合评分的 Agent 排行榜，支持导出可机读的 JSON 评测报告与证书清单。",
 };
 
+/** 榜单读的是运行时落库的真实结果，必须按请求渲染 */
+export const dynamic = "force-dynamic";
+
 /** 排行榜与报告（Leaderboard & Reports）。 */
-export default function LeaderboardPage() {
-  const entries = buildLeaderboard(AGENTS);
-  const certificates = buildCertificates(AGENTS);
+export default async function LeaderboardPage() {
+  const [agents, previousRank] = await Promise.all([
+    verifiedAgents(),
+    rankSnapshot(),
+  ]);
+
+  const entries = buildLeaderboard(agents, previousRank);
+  const certificates = buildCertificates(agents);
   const leader = entries[0];
 
   return (
@@ -30,7 +38,7 @@ export default function LeaderboardPage() {
         subtitle="排名由 NOVA 综合评分唯一决定，每一行都可下钻到向量级拆解。所有报告都是可机读的 JSON：字段稳定、可长期存档、不依赖界面。"
       />
 
-      <LeaderboardTable entries={entries} agents={AGENTS} />
+      <LeaderboardTable entries={entries} agents={agents} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="nova-panel rounded-xl p-4 lg:col-span-2">

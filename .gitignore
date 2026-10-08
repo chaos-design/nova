@@ -17,6 +17,9 @@
 /.next/
 /out/
 
+# nova 真实运行记录（本地落库，非演示数据）
+/.nova/
+
 # production
 /build
 

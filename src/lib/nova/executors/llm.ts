@@ -68,7 +68,8 @@ export function readLlmSettings(): LlmSettings | null {
     baseUrl: baseUrl.replace(/\/+$/, ""),
     apiKey: apiKey ?? "",
     model,
-    maxTokens: Number(process.env.LLM_MAX_TOKENS ?? 2_000),
+    // 非数字值回落默认值，而不是把 NaN 序列化成 max_tokens: null 发给供应商
+    maxTokens: Number.parseInt(process.env.LLM_MAX_TOKENS ?? "", 10) || 2_000,
   };
 }
 

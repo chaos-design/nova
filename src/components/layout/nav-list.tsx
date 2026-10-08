@@ -20,25 +20,36 @@ export function NavList({
   collapsed = false,
   onNavigate,
   sections = NAV_SECTIONS,
+  topAction,
 }: {
   collapsed?: boolean;
   onNavigate?: () => void;
   sections?: readonly NavSection[];
+  /** 渲染在第一组标题行右侧的操作位（如展开/收起按钮） */
+  topAction?: React.ReactNode;
 }) {
   const pathname = usePathname();
 
   return (
     <nav aria-label="主导航" className="flex flex-col gap-5">
-      {sections.map((section) => (
+      {sections.map((section, index) => (
         <section key={section.id} className="flex flex-col gap-1">
-          <h2
+          <div
             className={cn(
-              "nova-mono-label px-3 pb-2 text-muted-foreground/60",
-              collapsed && "sr-only",
+              "flex items-center pb-2",
+              collapsed ? "justify-center px-0" : "justify-between px-3",
             )}
           >
-            {section.label}
-          </h2>
+            <h2
+              className={cn(
+                "nova-mono-label text-muted-foreground/60",
+                collapsed && "sr-only",
+              )}
+            >
+              {section.label}
+            </h2>
+            {index === 0 ? topAction : undefined}
+          </div>
 
           {section.items.map((item) => {
             const active = pathname === item.href;

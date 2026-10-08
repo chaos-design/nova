@@ -1,9 +1,9 @@
+import { CHAOS_KINDS } from "@/lib/nova/constants";
 import type { LiveRunRequest, SandboxEvent } from "@/lib/nova/executor";
 import { runLive } from "@/lib/nova/executors/live";
-import { type LlmSettings, readLlmSettings } from "@/lib/nova/executors/llm";
 import { localAgentById, localAgentProfile } from "@/lib/nova/local-agents";
-import { agentById } from "@/lib/nova/mock-data";
-import type { AgentProfile } from "@/lib/nova/types";
+import { recordRun } from "@/lib/nova/run-store";
+import type { AgentProfile, ChaosInjection } from "@/lib/nova/types";
 
 /**
  * 真实沙盒执行接口。
@@ -22,16 +22,13 @@ export const maxDuration = 120;
 const MAX_BODY_BYTES = 32_768;
 
 export async function POST(request: Request) {
-  // 全局配置是内置 Agent 的运行配置；本地 Agent 有自己完整的运行配置，
-  // 因此这里的 settings 允许为 null，而在分流后按需判定是否缺失。
-  const settings = readLlmSettings();
-
   let payload: LiveRunRequest;
 
   try {
     const text = await request.text();
 
-    if (text.length > MAX_BODY_BYTES) {
+    // 按 UTF-8 字节而非字符数校验：中文提示词的字符数远小于线上字节数
+    if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) {
       return jsonError("请求体过大", "系统提示词不应超过 32KB。", 413);
     }
 
@@ -46,50 +43,58 @@ export async function POST(request: Request) {
     return jsonError(config.error, config.hint, 400);
   }
 
+  if (!isValidChaos(config.value.chaos)) {
+    return jsonError(
+      "chaos 配置含未知故障类型",
+      `kind 必须是 ${CHAOS_KINDS.map((item) => item.kind).join(" / ")} 之一。`,
+      400,
+    );
+  }
+
   // Agent 档案由服务端按 id 反查：绝不相信客户端传来的档案内容，
   // 否则评分就变成了"客户端自己给自己打分"。
-  // 内置 Agent 用全局 LLM_* 配置；本地 Agent 用它自己登记的端点/模型与
-  // 它自己的密钥环境变量（找不到时降级为无鉴权调用，Ollama 等可跑通）。
+  // 只有登记过的本地 Agent 可被投放 —— NOVA 不再维护任何内置档案。
   const localEntry = localAgentById(payload.agentId);
 
-  let profile: AgentProfile;
-  let effectiveSettings: LlmSettings | null;
-
-  if (localEntry) {
-    profile = localAgentProfile(localEntry);
-    // 密钥仍只来自服务端环境变量；登记侧给的是变量名，不是值
-    effectiveSettings = {
-      baseUrl: localEntry.endpoint,
-      apiKey:
-        process.env[localEntry.apiKeyEnv]?.trim() ??
-        process.env.LLM_API_KEY?.trim() ??
-        "",
-      model: localEntry.model,
-      maxTokens: Number(process.env.LLM_MAX_TOKENS) || 2_000,
-    };
-  } else {
-    try {
-      profile = agentById(payload.agentId);
-    } catch {
-      return jsonError(`未注册的 Agent：${payload.agentId}`, undefined, 400);
-    }
-    if (!settings) {
-      return jsonError(
-        "真实执行器未配置",
-        "请在 .env.local 中设置 LLM_BASE_URL、LLM_MODEL 后重启开发服务器；也可以在 local-agents.ts 登记一个本地 Agent。",
-      );
-    }
-    effectiveSettings = settings;
+  if (!localEntry) {
+    return jsonError(
+      `未注册的 Agent：${payload.agentId}`,
+      "只有登记在 src/lib/nova/local-agents.ts 的本地 Agent 可以被投放。",
+      400,
+    );
   }
+
+  const profile: AgentProfile = localAgentProfile(localEntry);
+
+  // 密钥仍只来自服务端环境变量；登记侧给的是变量名，不是值
+  const effectiveSettings = {
+    baseUrl: localEntry.endpoint,
+    apiKey:
+      process.env[localEntry.apiKeyEnv]?.trim() ??
+      process.env.LLM_API_KEY?.trim() ??
+      "",
+    model: localEntry.model,
+    maxTokens: Number(process.env.LLM_MAX_TOKENS) || 2_000,
+  };
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      // 客户端中止（停止按钮 / 离开页面）后流即取消：
+      // 对已取消的流 enqueue / close 都会抛错，必须全部防护，
+      // 否则每次中止都会在服务端留下一个未处理的 Promise 拒绝
       const send = (event: SandboxEvent) => {
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
-        );
+        if (request.signal.aborted) return;
+        try {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(event)}\n\n`),
+          );
+        } catch {
+          // 流已被消费方取消：后续事件自然不再发送
+        }
       };
+
+      const startedAt = Date.now();
 
       try {
         for await (const event of runLive(
@@ -98,6 +103,22 @@ export async function POST(request: Request) {
           effectiveSettings,
           request.signal,
         )) {
+          // 落库放在服务端而不是让客户端回传：评分若由客户端上报，
+          // 就等于把打分权交给了被测方
+          if (event.type === "done" && !request.signal.aborted) {
+            await recordRun({
+              agentId: profile.id,
+              environment: config.value.environment,
+              success: event.result.success,
+              score: event.result.score,
+              summary: event.result.summary,
+              durationMs: Date.now() - startedAt,
+              stages: event.result.stages,
+              observations: event.result.observations,
+              usage: event.result.usage,
+            });
+          }
+
           send(event);
         }
       } catch (error) {
@@ -107,7 +128,11 @@ export async function POST(request: Request) {
           message: error instanceof Error ? error.message : "未知错误",
         });
       } finally {
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // 流已被消费方取消：无需也无法再关闭
+        }
       }
     },
   });
@@ -174,6 +199,12 @@ function validate(payload: LiveRunRequest): Validation {
       maxSteps: capped,
     },
   };
+}
+
+/** chaos 注入的 kind 必须是已知故障类型，非法值会让剧本静默失真 */
+function isValidChaos(chaos: readonly ChaosInjection[]): boolean {
+  const known = new Set(CHAOS_KINDS.map((item) => item.kind));
+  return chaos.every((item) => known.has(item.kind));
 }
 
 function jsonError(message: string, hint?: string, status = 500) {

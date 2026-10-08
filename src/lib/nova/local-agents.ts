@@ -5,16 +5,18 @@ import type { AgentProfile, CapabilityScore, MetricReading } from "./types";
 /**
  * 本地 Agent 注册点。
  *
- * NOVA 当前是纯前端演示 + 一个真实沙盒执行接口，因此"接入一个本地 Agent"
- * 只有两个可落地的入口，它们都在这里汇合：
+ * NOVA 没有预置档案：要在这里登记一个真实可达的 Agent，它才会出现在
+ * 注册表里，跑完一次沙盒验证后才会产生评分并进入排行榜。
  *
- * 1. `LOCAL_AGENTS` —— 把 Agent 写进这个数组，它就会出现在注册表的
- *    「本地接入」分区里。这是**档案登记**，需要改代码、随仓库走、便于 code review。
- * 2. `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` —— 告诉真实执行器去调哪个
- *    OpenAI 兼容端点。这是**运行配置**，只存在于服务端环境变量里，密钥不进仓库。
+ * 两个入口在这里汇合：
  *
- * 刻意不做的事：不在运行时把密钥写进档案、不给本地 Agent 编造能力向量得分。
- * 未跑过验证的 Agent 没有评分可言，界面应该显示"待验证"而不是一个假的 0 分。
+ * 1. `LOCAL_AGENTS` —— 把 Agent 写进这个数组。这是**档案登记**，
+ *    需要改代码、随仓库走、便于 code review。
+ * 2. `apiKeyEnv` 指向的环境变量 —— 密钥的**变量名**（不是值）随登记进版本库，
+ *    值只存在于服务端的 `.env.local`。
+ *
+ * 刻意不做的事：不给未验证的 Agent 编造能力向量得分。没跑过就是没分数，
+ * 界面显示"待验证"，而不是一个假的 0 分。
  */
 
 /** 一条本地 Agent 登记 */
@@ -45,23 +47,30 @@ export interface LocalAgentEntry {
   registeredAt: string;
 }
 
-/** 已登记的本地 Agent。
+/**
+ * 已登记的本地 Agent。
  *
- * 默认留空：`local-agents.example.ts` 里有可直接粘贴的模板。
- * 有真实接入需求时在这里追加即可，注册表会自动多出一张本地档案卡。
+ * 这是 NOVA 唯一的数据来源：界面上的档案、评分、榜单全部由这里登记的
+ * Agent 真实跑出来的运行记录派生，没有任何预置档案。
+ *
+ * 仓库自带一个零依赖、可真实运行的执行体：
+ * `node examples/local-agent/nova-agent.mjs`（端口 43110，模型
+ * `nova-local-agent`），实现见该文件。自己接入时在这里追加一条登记即可，
+ * 完整步骤见 `docs/local-agent.md`。
  */
 export const LOCAL_AGENTS: readonly LocalAgentEntry[] = [
   {
-    id: "agt-local-solver",
-    name: "SOLVER",
-    codename: "本地试验体",
-    model: "qwen2.5:14b",
+    id: "agt-local-nova",
+    name: "NOVA-LOCAL",
+    codename: "本地执行体",
+    model: "nova-local-agent",
     owner: "本地开发",
-    version: "v0.1.0",
-    endpoint: "http://127.0.0.1:11434/v1",
+    version: "v1.0.0",
+    endpoint: "http://127.0.0.1:43110/v1",
     apiKeyEnv: "LLM_API_KEY",
-    tagline: "接入试验样例：Ollama 本地部署，跑真实工具调用与混沌注入",
-    registeredAt: "2026-10-06T06:00:00.000Z",
+    tagline:
+      "仓库自带的真实执行体：零依赖规则驱动，跑通检索—自愈—压缩—交卷全链路",
+    registeredAt: "2026-10-08T00:00:00.000Z",
   },
 ];
 
@@ -73,8 +82,8 @@ export function localAgentById(id: string): LocalAgentEntry | undefined {
 /**
  * 为沙盒执行派生档案。
  *
- * 执行器（`runLive` / `buildSimulationPlan`）需要一个 `AgentProfile` 才能
- * 计算韧性与推理返还。本地 Agent 没有真实评测读数，因此能力向量取**中性先验**
+ * 执行器（`runLive`）需要一个 `AgentProfile` 才能计算韧性与推理返还。
+ * 本地 Agent 在首次验证前没有真实评测读数，因此能力向量取**中性先验**
  * （70 分、空读数、delta=0）——它只参与执行中的启发式估计，
  * 不会被当作评测结论展示：本地档案的卡片只显示端点/模型/登记信息。
  */
@@ -98,7 +107,8 @@ export function localAgentProfile(entry: LocalAgentEntry): AgentProfile {
     status: "queued",
     registeredAt: entry.registeredAt,
     lastVerifiedAt: null,
-    scenarios: { passed: 0, total: 50 },
+    // 场景通过率由真实运行累计，登记时尚未跑过，如实为 0/0
+    scenarios: { passed: 0, total: 0 },
     capabilities: vectors,
     compositeScore: composite,
     grade: gradeOf(composite),

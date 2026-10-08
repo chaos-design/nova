@@ -103,7 +103,8 @@ export function LeaderboardTable({
   const exportAll = () => {
     downloadJson("nova-leaderboard-report.json", {
       reportVersion: "1.0.0",
-      generatedAt: agents[0]?.lastVerifiedAt ?? null,
+      // 报告是当次导出的快照，时间戳取真实导出时刻
+      generatedAt: new Date().toISOString(),
       standard: "Agent 验证核心标准 v1.0",
       ranking: rows.map((entry) => ({
         rank: entry.rank,
@@ -179,8 +180,17 @@ export function LeaderboardTable({
                     key={entry.agentId}
                     data-active={active}
                     onClick={() => setSelectedId(entry.agentId)}
+                    onKeyDown={(event) => {
+                      // 行选择必须键盘可达：评分详情与导出入口都挂在选中态上
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      setSelectedId(entry.agentId);
+                    }}
+                    tabIndex={0}
+                    aria-selected={active}
                     className={cn(
                       "cursor-pointer transition-colors",
+                      "focus-visible:outline focus-visible:outline-nova-cyan/60 focus-visible:-outline-offset-1",
                       active && "bg-nova-cyan/6",
                     )}
                   >

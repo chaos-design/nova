@@ -1,21 +1,16 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type ExecutorId,
   type ExecutorResult,
   type SandboxEvent,
   stepToLog,
 } from "@/lib/nova/executor";
-import { runSimulation } from "@/lib/nova/executors/simulation";
-import type {
-  AgentProfile,
-  SimulationConfig,
-  SimulationLog,
-} from "@/lib/nova/types";
+import type { SimulationConfig, SimulationLog } from "@/lib/nova/types";
 
 /** 运行状态机 */
-export type RunStatus = "idle" | "running" | "completed" | "failed";
+export type RunStatus = "idle" | "running" | "completed" | "failed" | "stopped";
 
 /** 元信息（由执行器的 meta 事件提供） */
 export interface RunMeta {
@@ -39,11 +34,8 @@ const MAX_BUFFER_LOGS = 400;
 /**
  * 沙盒运行的统一状态机。
  *
- * 两种执行器共用这一条状态机：
- * - `simulation` 在本进程内消费异步生成器，零网络开销；
- * - `live` 通过 `POST /api/sandbox/run` 消费 SSE 流。
- *
- * 事件语义相同，因此 UI 层只有一份渲染代码、一个进度条、一套错误处理。
+ * 通过 `POST /api/sandbox/run` 消费 SSE 流驱动：服务端真实执行、
+ * 逐帧回传事件，客户端只做渲染与中止。
  * 状态里只有 6 个字段，全部由事件单向驱动，没有任何派生副本。
  */
 export function useSandboxRun() {
@@ -57,6 +49,16 @@ export function useSandboxRun() {
 
   const abortRef = useRef<AbortController | null>(null);
   const startedAt = useRef(0);
+
+  // 离开沙盒页时中止进行中的运行：真实执行器可能还在流式消耗模型 token，
+  // 本地仿真也在继续推进 —— 卸载不清理等于把运行变成脱缰的野马
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+    },
+    [],
+  );
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
@@ -134,28 +136,7 @@ export function useSandboxRun() {
     return controller;
   }, []);
 
-  /** 本地仿真执行器 */
-  const runLocal = useCallback(
-    async (config: SimulationConfig, agent: AgentProfile) => {
-      const controller = prepare();
-
-      try {
-        for await (const event of runSimulation(
-          config,
-          agent,
-          controller.signal,
-        )) {
-          consume(event, config.maxSteps);
-        }
-      } catch (caught) {
-        setError({ message: describe(caught) });
-        setStatus("failed");
-      }
-    },
-    [consume, prepare],
-  );
-
-  /** 真实执行器：单次 POST + SSE 流式读取 */
+  /** 单次 POST + SSE 流式读取 */
   const runRemote = useCallback(
     async (config: SimulationConfig) => {
       const controller = prepare();
@@ -187,9 +168,13 @@ export function useSandboxRun() {
           return;
         }
 
-        await readSse(response.body, controller.signal, (event) =>
-          consume(event, config.maxSteps),
-        );
+        await readSse(response.body, controller.signal, (event) => {
+          consume(event, config.maxSteps);
+          // 结论或错误已落定：没有必要继续读到 EOF，立即断流省掉空转
+          return event.type === "done" || event.type === "error"
+            ? "stop"
+            : "continue";
+        });
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === "AbortError")
           return;
@@ -200,11 +185,13 @@ export function useSandboxRun() {
     [consume, prepare],
   );
 
-  /** 主动中止：执行器会在下一个检查点退出 */
+  /** 主动中止：执行器会在下一个检查点退出；空闲时按下不做任何事 */
   const stop = useCallback(() => {
-    abortRef.current?.abort();
+    if (abortRef.current === null) return;
+    abortRef.current.abort();
     abortRef.current = null;
-    setStatus("completed");
+    // 中止不是完成：单独成态，让界面能区分「跑完了」与「被手动停了」
+    setStatus("stopped");
   }, []);
 
   const total = meta?.totalSteps ?? 0;
@@ -223,7 +210,6 @@ export function useSandboxRun() {
       played: logs.length,
       progress: total === 0 ? 0 : Math.min(round / total, 1),
       running: status === "running",
-      runLocal,
       runRemote,
       stop,
       reset,
@@ -237,7 +223,6 @@ export function useSandboxRun() {
       score,
       round,
       total,
-      runLocal,
       runRemote,
       stop,
       reset,
@@ -245,11 +230,11 @@ export function useSandboxRun() {
   );
 }
 
-/** 读取 SSE 流并逐帧回调 */
+/** 读取 SSE 流并逐帧回调；回调返回 "stop" 时立即取消读取 */
 async function readSse(
   body: ReadableStream<Uint8Array>,
   signal: AbortSignal,
-  onEvent: (event: SandboxEvent) => void,
+  onEvent: (event: SandboxEvent) => "continue" | "stop",
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -283,7 +268,10 @@ async function readSse(
         if (!data) continue;
 
         try {
-          onEvent(JSON.parse(data) as SandboxEvent);
+          if (onEvent(JSON.parse(data) as SandboxEvent) === "stop") {
+            await reader.cancel().catch(() => undefined);
+            return;
+          }
         } catch {
           // 单帧解析失败不应中断整条流
         }

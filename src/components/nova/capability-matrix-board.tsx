@@ -20,6 +20,7 @@ import {
   ACCENT_BAR_CLASS,
   ACCENT_TEXT,
   CAPABILITY_VECTORS,
+  compositeScore,
   formatNumber,
   VECTOR_META,
 } from "@/lib/nova";
@@ -242,8 +243,9 @@ export function CapabilityMatrixBoard({
                       })}
 
                       <td className="px-3 py-2 text-right">
+                        {/* 综合列由复测后的向量实时派生：复测落回原位时综合分同步更新 */}
                         <span className="font-mono text-sm font-semibold tabular-nums text-nova-starlight">
-                          {formatNumber(agent.compositeScore, 1)}
+                          {formatNumber(compositeScore(scores), 1)}
                         </span>
                       </td>
                     </tr>

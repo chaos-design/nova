@@ -12,7 +12,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { AGENTS, averageCapabilities, CAPABILITY_VECTORS } from "@/lib/nova";
+import { averageCapabilities, CAPABILITY_VECTORS } from "@/lib/nova";
+import { verifiedAgents } from "@/lib/nova/run-store";
 
 export const metadata: Metadata = {
   title: "能力矩阵",
@@ -20,22 +21,25 @@ export const metadata: Metadata = {
     "基于 NOVA 核心标准的能力测试矩阵：自主性、工具调用、记忆留存、逻辑推理四大向量的交互式评测。",
 };
 
-/** 集群平均能力向量，作为雷达图对照基线 */
-const BASELINE = averageCapabilities(AGENTS);
+/** 矩阵读的是运行时落库的真实结果，必须按请求渲染 */
+export const dynamic = "force-dynamic";
 
 /**
  * 能力矩阵（Capability Testing Matrix）。
  *
  * 页面上半部分是标准（四个向量及其评测指标），下半部分是量表本体
- * （Agent × 向量的二维矩阵）。点击单元格即可触发该维度的定向复测。
+ * （Agent × 向量的二维矩阵）。矩阵只收录跑出过真实结果的 Agent。
  */
-export default function MatrixPage() {
+export default async function MatrixPage() {
+  const agents = await verifiedAgents();
+  const baseline = averageCapabilities(agents);
+
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Capability Matrix"
         title="能力测试矩阵"
-        subtitle="NOVA 把每个 Agent 的能力拆成四个可独立评分的向量。矩阵的每一格都是一次可触发的定向复测，复测结果直接落回原位，便于横向对照短板。"
+        subtitle="NOVA 把每个 Agent 的能力拆成四个可独立评分的向量。每个得分都由一次真实运行的可观测计数算出，没有预置画像。"
         actions={
           <Button asChild>
             <Link href="/sandbox">
@@ -48,7 +52,7 @@ export default function MatrixPage() {
 
       <CapabilityVectorCards />
 
-      <CapabilityMatrixBoard agents={AGENTS} baseline={BASELINE} />
+      <CapabilityMatrixBoard agents={agents} baseline={baseline} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
@@ -68,8 +72,8 @@ export default function MatrixPage() {
                   </span>
                 </div>
                 <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                  评测指标：{vector.metrics.join("、")}。子项指标按达标比例 (1.0
-                  达标 / 0.8 接近 / 其余未达标) 折算为 0 ~ 100 的向量得分。
+                  评测指标：{vector.metrics.join("、")}。子项按达标比例折算为 0
+                  ~ 100 的向量得分（标准 §1.1 / §3.5）。
                 </p>
               </div>
             ))}
@@ -113,7 +117,7 @@ export default function MatrixPage() {
         <CardHeader>
           <CardTitle>下一步</CardTitle>
           <CardDescription>
-            矩阵给出的是静态能力画像，真正的边界在混沌环境里
+            矩阵给出的是实测能力画像，真正的边界在混沌环境里
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-3">

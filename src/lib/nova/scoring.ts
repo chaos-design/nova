@@ -30,6 +30,28 @@ export function compositeScore(scores: readonly CapabilityScore[]): number {
   return Math.round((weighted / totalWeight) * 10) / 10;
 }
 
+/**
+ * 达标比例 → 子项得分（0 ~ 100）。
+ *
+ * 标准 §1.1 的三档口径在这里落成一条连续曲线：
+ * ≥1.0 → 100 分，0.8 → 80 分，0 → 0 分，中间线性插值。
+ * 这样"达标 / 接近 / 未达标"既是界面的判定语言，也是评分的计算口径，
+ * 两者不会各说各话。
+ */
+export function attainmentScore(ratio: number): number {
+  if (!Number.isFinite(ratio) || ratio <= 0) return 0;
+  if (ratio >= 1) return 100;
+  if (ratio >= 0.8) return 80 + ((ratio - 0.8) / 0.2) * 20;
+  return (ratio / 0.8) * 80;
+}
+
+/** 两个子项的达标分均值，即该向量的得分 */
+export function vectorScoreOf(...ratios: number[]): number {
+  if (ratios.length === 0) return 0;
+  const sum = ratios.reduce((acc, ratio) => acc + attainmentScore(ratio), 0);
+  return Math.round((sum / ratios.length) * 10) / 10;
+}
+
 /** 分数 → 评级 */
 export function gradeOf(score: number): NovaGrade {
   const matched = GRADE_THRESHOLDS.find((item) => score >= item.min);
@@ -62,28 +84,38 @@ export function vectorScoreMap(
   return map;
 }
 
-/** 由 Agent 档案集合派生排行榜（按综合评分降序） */
+/**
+ * 由 Agent 档案集合派生排行榜（按综合评分降序）。
+ *
+ * `previousRank` 是上一次评估落库时的排名快照：排名变化只能来自真实的
+ * 名次位移，没有历史时一律记 0（首次上榜不显示涨跌）。
+ */
 export function buildLeaderboard(
   agents: readonly AgentProfile[],
+  previousRank: Readonly<Record<string, number>> = {},
 ): LeaderboardEntry[] {
   const sorted = [...agents].sort(
     (a, b) => b.compositeScore - a.compositeScore || a.id.localeCompare(b.id),
   );
 
-  return sorted.map((agent, index) => ({
-    rank: index + 1,
-    agentId: agent.id,
-    name: agent.name,
-    codename: agent.codename,
-    model: agent.model,
-    compositeScore: agent.compositeScore,
-    grade: agent.grade,
-    // 演示数据：排名趋势由排名派生，展示"较上一轮"的升降
-    rankDelta: ((index + 2) % 5) - 2,
-    scenariosPassed: agent.scenarios.passed,
-    scenariosTotal: agent.scenarios.total,
-    vectorScores: vectorScoreMap(agent),
-  }));
+  return sorted.map((agent, index) => {
+    const rank = index + 1;
+    const before = previousRank[agent.id];
+
+    return {
+      rank,
+      agentId: agent.id,
+      name: agent.name,
+      codename: agent.codename,
+      model: agent.model,
+      compositeScore: agent.compositeScore,
+      grade: agent.grade,
+      rankDelta: before === undefined ? 0 : before - rank,
+      scenariosPassed: agent.scenarios.passed,
+      scenariosTotal: agent.scenarios.total,
+      vectorScores: vectorScoreMap(agent),
+    };
+  });
 }
 
 /** 单个 Agent 的韧性系数（0 ~ 1），用于模拟中估算故障代价 */

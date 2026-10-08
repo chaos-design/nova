@@ -3,7 +3,6 @@
 import { cn } from "cn";
 import { Orbit, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
@@ -60,31 +59,11 @@ export function NovaSidebar({
     >
       <div
         className={cn(
-          "flex h-14 shrink-0 items-center border-b border-white/8",
+          "flex h-16 shrink-0 items-center border-b border-white/8",
           collapsed ? "justify-center px-2" : "justify-between px-4",
         )}
       >
         <NovaLogo compact={collapsed} />
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={toggleCollapsed}
-              aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
-              aria-expanded={!collapsed}
-            >
-              {collapsed ? (
-                <PanelLeftOpen className="text-nova-accent" />
-              ) : (
-                <PanelLeftClose />
-              )}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">
-            {collapsed ? "展开侧边栏" : "收起侧边栏"}
-          </TooltipContent>
-        </Tooltip>
       </div>
 
       <div className={cn("shrink-0 py-4", collapsed ? "px-2" : "px-3")}>
@@ -107,7 +86,31 @@ export function NovaSidebar({
           collapsed ? "px-2" : "px-3",
         )}
       >
-        <NavList collapsed={collapsed} />
+        <NavList
+          collapsed={collapsed}
+          topAction={
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={toggleCollapsed}
+                  aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
+                  aria-expanded={!collapsed}
+                  className="grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/6 hover:text-foreground"
+                >
+                  {collapsed ? (
+                    <PanelLeftOpen className="size-4 text-nova-accent" />
+                  ) : (
+                    <PanelLeftClose className="size-4" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side={collapsed ? "right" : "bottom"}>
+                {collapsed ? "展开侧边栏" : "收起侧边栏"}
+              </TooltipContent>
+            </Tooltip>
+          }
+        />
       </div>
 
       {/* 吸底状态区：主色、集群与标准始终留在视野里 */}

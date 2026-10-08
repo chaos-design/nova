@@ -28,14 +28,6 @@ export const NOVA_BRAND = {
   standard: "Agent 验证核心标准 v1.0",
 } as const;
 
-/**
- * 演示数据的时间锚点（ISO 8601）。
- *
- * 全部 mock 数据都相对该锚点生成：页面可以被静态预渲染，
- * 任何时候打开看到的文案都完全一致。
- */
-export const DEMO_EPOCH = "2026-10-05T06:30:00.000Z";
-
 /* -------------------------------------------------------------------------- */
 /* 能力矩阵                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -299,7 +291,7 @@ export const TELEMETRY_METRICS = [
   },
   {
     id: "latencyMs",
-    label: "响应延迟",
+    label: "验证耗时",
     unit: "ms",
     precision: 0,
     higherIsBetter: false,
@@ -307,7 +299,7 @@ export const TELEMETRY_METRICS = [
   },
   {
     id: "memoryUtilization",
-    label: "记忆占用率",
+    label: "步数占用率",
     unit: "%",
     precision: 1,
     higherIsBetter: false,
@@ -315,7 +307,7 @@ export const TELEMETRY_METRICS = [
   },
   {
     id: "throughputTps",
-    label: "并发吞吐",
+    label: "Token 吞吐",
     unit: "tps",
     precision: 1,
     higherIsBetter: true,

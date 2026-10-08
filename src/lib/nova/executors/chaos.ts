@@ -73,6 +73,10 @@ export function scheduleFaults(
     if (!meta) continue;
 
     const effective = effectiveIntensity(config, injection.kind);
+    // 强度为 0（用户拉到 0 或被环境上限裁剪到 0）意味着不注入，
+    // 也绝不能扣分 —— 强行注入一次会让「零强度」配置仍然付费
+    if (effective <= 0) continue;
+
     const occurrences = Math.min(
       Math.max(Math.round((effective * slots) / meta.spacing), 1),
       slots,

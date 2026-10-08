@@ -1,14 +1,6 @@
 "use client";
 
-import {
-  Activity,
-  Cpu,
-  MemoryStick,
-  Pause,
-  Play,
-  Timer,
-  Zap,
-} from "lucide-react";
+import { Activity, Cpu, MemoryStick, Timer, Zap } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import {
   Area,
@@ -19,10 +11,8 @@ import {
   YAxis,
 } from "recharts";
 import { KpiCard } from "@/components/nova/kpi-card";
-import { Button } from "@/components/ui/button";
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -35,7 +25,6 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useTelemetryStream } from "@/hooks/use-telemetry-stream";
 import { formatNumber } from "@/lib/nova";
 import { TELEMETRY_METRICS } from "@/lib/nova/constants";
 import type { TelemetryMetricId, TelemetryPoint } from "@/lib/nova/types";
@@ -68,34 +57,39 @@ const METRIC_TARGETS: Record<TelemetryMetricId, number> = {
 };
 
 /**
- * 遥测中枢的交互部分：KPI 行 + 实时曲线。
+ * 遥测中枢：KPI 行 + 实测曲线。
  *
- * 遥测流是纯客户端状态（服务端不持有连接），因此这一层必须位于
- * 客户端边界内；种子数据由服务端页面传入，保证首屏与服务端渲染一致。
+ * 采样点是**真实运行记录**派生出来的，一次运行一个点；没有后台推送，
+ * 也不再凭空生成后续点。因此这一层只做选择与绘图，数据源由服务端页面传入。
  */
-export function TelemetryHub({ seed }: { seed: readonly TelemetryPoint[] }) {
-  const stream = useTelemetryStream({ seed });
+export function TelemetryHub({
+  points,
+}: {
+  points: readonly TelemetryPoint[];
+}) {
   const [metric, setMetric] = useState<TelemetryMetricId>("successRate");
   const gradientId = useId().replace(/:/g, "");
 
   const activeMeta = TELEMETRY_METRICS.find((item) => item.id === metric);
   const target = METRIC_TARGETS[metric];
+  const latest = points[points.length - 1];
 
   const chartData = useMemo(
-    () => stream.points.map((point) => ({ t: point.t, value: point[metric] })),
-    [stream.points, metric],
+    () => points.map((point) => ({ t: point.t, value: point[metric] })),
+    [points, metric],
   );
 
   const deltas = useMemo(() => {
-    const first = stream.points[0];
-    const last = stream.latest;
+    const first = points[0];
     return Object.fromEntries(
       TELEMETRY_METRICS.map((item) => [
         item.id,
-        first && last ? Number((last[item.id] - first[item.id]).toFixed(1)) : 0,
+        first && latest
+          ? Number((latest[item.id] - first[item.id]).toFixed(1))
+          : 0,
       ]),
     ) as Record<TelemetryMetricId, number>;
-  }, [stream.points, stream.latest]);
+  }, [points, latest]);
 
   const yDomain = useMemo<[number, number]>(() => {
     const values = chartData.map((point) => point.value);
@@ -116,7 +110,7 @@ export function TelemetryHub({ seed }: { seed: readonly TelemetryPoint[] }) {
             key={item.id}
             label={item.label}
             caption={`窗口内变化 · 目标 ${formatNumber(target, item.precision)}${item.unit}`}
-            value={stream.latest?.[item.id] ?? 0}
+            value={latest?.[item.id] ?? 0}
             unit={item.unit}
             precision={item.precision}
             delta={deltas[item.id]}
@@ -129,21 +123,10 @@ export function TelemetryHub({ seed }: { seed: readonly TelemetryPoint[] }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>实时遥测曲线</CardTitle>
+          <CardTitle>实测遥测曲线</CardTitle>
           <CardDescription>
-            采样间隔 2 秒 · 保留最近 {stream.points.length} 个点
+            每次真实运行一个采样点 · 共 {points.length} 个点
           </CardDescription>
-          <CardAction>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={stream.toggle}
-              aria-pressed={stream.paused}
-            >
-              {stream.paused ? <Play /> : <Pause />}
-              {stream.paused ? "继续" : "暂停"}
-            </Button>
-          </CardAction>
         </CardHeader>
 
         <CardContent className="space-y-4">
@@ -231,15 +214,12 @@ export function TelemetryHub({ seed }: { seed: readonly TelemetryPoint[] }) {
           <div className="flex flex-wrap items-center gap-x-5 gap-y-1 font-mono text-[0.6875rem] text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
               <Cpu className="size-3 text-nova-cyan" />
-              采样序号 {stream.cursor}
+              运行序号 {points.length}
             </span>
             <span className="inline-flex items-center gap-1.5">
               <Activity className="size-3 text-nova-fuchsia" />
               当前指标 {activeMeta?.label} ·{" "}
-              {formatNumber(
-                stream.latest?.[metric] ?? 0,
-                activeMeta?.precision ?? 1,
-              )}
+              {formatNumber(latest?.[metric] ?? 0, activeMeta?.precision ?? 1)}
               {activeMeta?.unit}
             </span>
           </div>

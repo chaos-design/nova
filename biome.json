@@ -63,6 +63,17 @@
           }
         }
       }
+    },
+    {
+      "includes": ["src/app/(nova)/docs/sections.tsx"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noArrayIndexKey": "off",
+            "noTemplateCurlyInString": "off"
+          }
+        }
+      }
     }
   ],
   "assist": {

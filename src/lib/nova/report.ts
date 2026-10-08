@@ -1,4 +1,4 @@
-import { CAPABILITY_VECTORS, DEMO_EPOCH, NOVA_BRAND } from "./constants";
+import { CAPABILITY_VECTORS, NOVA_BRAND } from "./constants";
 import { round } from "./format";
 import { vectorScoreMap } from "./scoring";
 import type {
@@ -30,7 +30,7 @@ export function buildCertificate(agent: AgentProfile): NovaCertificate | null {
     agentId: agent.id,
     grade: agent.grade,
     compositeScore: agent.compositeScore,
-    issuedAt: agent.lastVerifiedAt ?? DEMO_EPOCH,
+    issuedAt: agent.lastVerifiedAt ?? new Date().toISOString(),
     checksum: checksum(
       `${agent.id}:${agent.version}:${agent.compositeScore}:${agent.lastVerifiedAt}`,
     ),
@@ -59,7 +59,8 @@ export function buildReport(
 ): NovaReport {
   return {
     reportVersion: REPORT_VERSION,
-    generatedAt: DEMO_EPOCH,
+    // 报告是当次导出的快照，时间戳取真实导出时刻
+    generatedAt: new Date().toISOString(),
     generator: `${NOVA_BRAND.fullName} Console / ${NOVA_BRAND.expansion}`,
     standard: NOVA_BRAND.standard,
     agent: {

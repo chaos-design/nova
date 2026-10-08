@@ -1,4 +1,4 @@
-import { Activity, ArrowRight, Sparkles } from "lucide-react";
+import { Activity, ArrowRight, FlaskConical, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { AgentIdentity } from "@/components/nova/agent-identity";
@@ -18,35 +18,46 @@ import {
 } from "@/components/ui/card";
 import {
   ACCENT_TEXT,
-  AGENTS_BY_SCORE,
-  agentById,
-  CLUSTER_STATS,
   formatDelta,
   LIFECYCLE_FLOW,
   NOVA_BRAND,
-  TELEMETRY_SEED,
-  VERIFICATION_RUNS,
 } from "@/lib/nova";
+import {
+  clusterStats,
+  listRuns,
+  telemetrySeries,
+  verifiedAgents,
+} from "@/lib/nova/run-store";
 
 /**
  * 遥测中枢（Telemetry Hub）。
  *
- * 服务端负责取数与首屏渲染（遥测种子、验证运行、Agent 快照），
- * 只有真正需要时间推进的部分（遥测流、事件总线）进入客户端边界。
+ * 每个数字都来自本地真实跑完的沙盒验证（`.nova/runs.json`）。
+ * 一次都没跑过时页面如实给出空态，而不是拿一份预置数据把界面填满。
+ * 因为读的是运行时文件，本页必须按请求渲染。
  */
-export default function DashboardPage() {
-  const runningRun =
-    VERIFICATION_RUNS.find((run) => run.finishedAt === null) ??
-    VERIFICATION_RUNS[0];
-  const topAgents = AGENTS_BY_SCORE.slice(0, 4);
-  const latest = TELEMETRY_SEED[TELEMETRY_SEED.length - 1];
+export const dynamic = "force-dynamic";
+
+export default async function DashboardPage() {
+  const [runs, agents, stats, telemetry] = await Promise.all([
+    listRuns(),
+    verifiedAgents(),
+    clusterStats(),
+    telemetrySeries(),
+  ]);
+
+  const latestRun = runs[0] ?? null;
+  const latestAgent = latestRun
+    ? agents.find((agent) => agent.id === latestRun.agentId)
+    : undefined;
+  const topAgents = agents.slice(0, 4);
 
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Telemetry Hub"
         title="遥测中枢"
-        subtitle="汇总全集群的验证进度、实时性能与事件流。所有指标由遥测中枢每 2 秒聚合一次，异常会直接反映在混沌事件计数上。"
+        subtitle="汇总本机的验证进度、实测性能与事件流。所有指标由真实运行记录派生，混沌事件计数随注入次数累加。"
         actions={
           <>
             <Button variant="outline" asChild>
@@ -69,16 +80,18 @@ export default function DashboardPage() {
       <Card>
         <CardHeader>
           <CardTitle>集群概览</CardTitle>
-          <CardDescription>距演示锚点 · {NOVA_BRAND.standard}</CardDescription>
+          <CardDescription>
+            数据源：本地真实运行记录 · {NOVA_BRAND.standard}
+          </CardDescription>
           <CardAction>
             <span className="inline-flex items-center gap-1.5 font-mono text-[0.6875rem] text-nova-cyan">
               <Activity className="size-3 animate-nova-blink" />
-              STREAMING
+              {runs.length > 0 ? "RECORDING" : "IDLE"}
             </span>
           </CardAction>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {CLUSTER_STATS.map((stat) => (
+          {stats.map((stat) => (
             <div key={stat.id} className="nova-panel rounded-lg p-3">
               <div className="flex items-baseline justify-between gap-2">
                 <span className="text-xs text-muted-foreground">
@@ -108,29 +121,41 @@ export default function DashboardPage() {
       </Card>
 
       {/* 遥测 KPI 与曲线 */}
-      <TelemetryHub seed={TELEMETRY_SEED} />
+      <TelemetryHub points={telemetry} />
 
-      {/* 当前验证流水线 + 事件流 */}
+      {/* 最近一次验证流水线 + 事件流 */}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_26rem]">
         <Card>
           <CardHeader>
-            <CardTitle>当前验证流水线</CardTitle>
+            <CardTitle>最近一次验证流水线</CardTitle>
             <CardDescription>
-              {agentById(runningRun.agentId).name} · {runningRun.id} ·{" "}
-              {runningRun.environment === "stochastic"
-                ? "随机环境"
-                : runningRun.environment === "arena"
-                  ? "多智能体竞技场"
-                  : "确定性环境"}
+              {latestRun
+                ? `${latestAgent?.name ?? latestRun.agentId} · ${latestRun.id}`
+                : "尚无运行记录"}
             </CardDescription>
             <CardAction>
               <Badge variant="outline" className="font-mono text-[0.625rem]">
-                {runningRun.finishedAt === null ? "运行中" : "已归档"}
+                {latestRun ? "已归档" : "待投放"}
               </Badge>
             </CardAction>
           </CardHeader>
           <CardContent className="space-y-5">
-            <VerificationStepper run={runningRun} />
+            {latestRun ? (
+              <VerificationStepper run={latestRun} />
+            ) : (
+              <div className="nova-panel rounded-lg p-4">
+                <p className="text-sm text-muted-foreground">
+                  还没有任何验证运行。到沙盒里投放一次，这里就会显示那条
+                  真实跑出来的流水线。
+                </p>
+                <Button asChild size="sm" className="mt-3">
+                  <Link href="/sandbox">
+                    <FlaskConical data-icon="inline-start" />
+                    去沙盒投放
+                  </Link>
+                </Button>
+              </div>
+            )}
 
             <div className="nova-panel rounded-lg p-3">
               <p className="nova-mono-label text-muted-foreground">
@@ -140,15 +165,15 @@ export default function DashboardPage() {
                 {LIFECYCLE_FLOW}
               </p>
               <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                {runningRun.notes}。最新遥测采样点：任务成功率{" "}
-                {latest.successRate}% · 响应延迟 {latest.latencyMs}ms · 记忆占用{" "}
-                {latest.memoryUtilization}%。
+                {latestRun
+                  ? latestRun.notes
+                  : "流水线由真实执行器驱动：接入 → 静态校验 → 场景执行 → 爆发评估 → 证书判定。"}
               </p>
             </div>
           </CardContent>
         </Card>
 
-        <LiveLogTerminal runs={VERIFICATION_RUNS} />
+        <LiveLogTerminal runs={runs} />
       </div>
 
       {/* 榜首快照 */}
@@ -156,7 +181,7 @@ export default function DashboardPage() {
         <CardHeader>
           <CardTitle>综合评分 TOP 4</CardTitle>
           <CardDescription>
-            按 NOVA 综合评分排序 · 完整榜单见排行榜页
+            按 NOVA 综合评分排序 · 仅收录已跑出真实结果的 Agent
           </CardDescription>
           <CardAction>
             <Button variant="ghost" size="sm" asChild>
@@ -167,30 +192,38 @@ export default function DashboardPage() {
             </Button>
           </CardAction>
         </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {topAgents.map((agent, index) => (
-            <Link
-              key={agent.id}
-              href="/leaderboard"
-              className="nova-panel group rounded-lg p-3 transition-colors hover:border-nova-cyan/30"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="nova-mono-label text-muted-foreground">
-                  RANK {String(index + 1).padStart(2, "0")}
-                </span>
-                <GradeChip grade={agent.grade} />
-              </div>
-              <AgentIdentity agent={agent} className="mt-3" />
-              <p className="mt-3 flex items-baseline gap-1">
-                <span className="font-mono text-2xl font-semibold tabular-nums text-nova-starlight">
-                  {agent.compositeScore}
-                </span>
-                <span className="font-mono text-xs text-muted-foreground">
-                  / 100
-                </span>
-              </p>
-            </Link>
-          ))}
+        <CardContent>
+          {topAgents.length > 0 ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {topAgents.map((agent, index) => (
+                <Link
+                  key={agent.id}
+                  href="/leaderboard"
+                  className="nova-panel group rounded-lg p-3 transition-colors hover:border-nova-cyan/30"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="nova-mono-label text-muted-foreground">
+                      RANK {String(index + 1).padStart(2, "0")}
+                    </span>
+                    <GradeChip grade={agent.grade} />
+                  </div>
+                  <AgentIdentity agent={agent} className="mt-3" />
+                  <p className="mt-3 flex items-baseline gap-1">
+                    <span className="font-mono text-2xl font-semibold tabular-nums text-nova-starlight">
+                      {agent.compositeScore}
+                    </span>
+                    <span className="font-mono text-xs text-muted-foreground">
+                      / 100
+                    </span>
+                  </p>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              还没有 Agent 跑出评分。排行榜在第一次真实验证完成后才会出现。
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>

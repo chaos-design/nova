@@ -10,9 +10,11 @@
 ## 1. 项目是什么
 
 NOVA（Next-gen Operational Verification for Agents）是一个面向 AI Agent 的
-验证、测试与编排控制台。演示数据全部来自 `src/lib/nova/mock-data.ts` 的确定性生成，
-本地 Agent 的登记由 `src/lib/nova/local-agents.ts` 提供；Route Handler
-（`/api/sandbox/run`、`/api/agents/probe`）只做服务端代理，不持久化数据。
+验证、测试与编排控制台。**界面上没有预置数据**：所有档案、评分、榜单都来自
+登记在 `src/lib/nova/local-agents.ts` 的 Agent 真实跑出来的运行记录，
+由 `src/lib/nova/run-store.ts` 落库于 `.nova/runs.json`；沙盒只有真实执行
+一条路径（`src/lib/nova/executors/live.ts`）。Route Handler
+（`/api/sandbox/run`、`/api/agents/probe`）只做服务端代理与落库。
 所有在界面上出现的分数都必须能追溯到 `docs/nova-standard.md` 的某一条规则 ——
 新增任何"指标"之前，先读那份文档。
 
@@ -25,7 +27,7 @@ NOVA（Next-gen Operational Verification for Agents）是一个面向 AI Agent �
 | `src/lib/nova/` | 领域层 | 放类型、常量、评分、剧本、报告等纯逻辑 | import 任何 React 组件或 hook |
 | `src/hooks/` | 时间推进型状态机 | 放带 `useState`/`useEffect` 的通用状态逻辑 | 耦合具体页面 |
 | `src/components/layout/` | 控制台外壳 | 导航、顶栏、品牌、页头、深空背景 | 放业务卡片 |
-| `src/components/nova/` | 领域组件 | 仪表、图表、矩阵、沙盒、终端 | 直接 `fetch` 或读 mock 文件 |
+| `src/components/nova/` | 领域组件 | 仪表、图表、矩阵、沙盒、终端 | 直接 `fetch` 或读存储文件 |
 | `src/components/ui/` | **shadcn CLI 托管** | 通过 `npx shadcn@latest add <组件>` 生成或 `--overwrite` 重生成 | 手写、修改、重排 |
 | `src/app/(nova)/` | 页面 | Server Component，取数 + 组装 + 首屏渲染 | 放置跨页共享的组件 |
 
@@ -66,13 +68,16 @@ npm run build      # 生产构建（同时校验类型）
 **首屏数据一律由服务端页面作为 props 传入客户端组件**，
 不要在客户端重新生成 —— 这是消除 hydration 不一致的根本做法。
 
-### 3.4 修改演示数据时
+### 3.4 使用真实运行存储时
 
-`src/lib/nova/mock-data.ts` 的三条铁律：
+`src/lib/nova/run-store.ts` 的三条铁律：
 
-1. **不引入 `Math.random()` 与 `Date.now()`**：一切由序号与 `DEMO_EPOCH` 锚点决定；
-2. **不硬编码派生值**：综合评分、评级、证书编号必须由能力向量派生；
-3. **改能力向量就要检查下游**：评级、排名、沙盒故障代价、证书签发全部依赖它。
+1. **服务端专属**：它带 `server-only` 且依赖 `node:fs`，因此不从 `@/lib/nova`
+   统一出口导出，只能由服务端页面按 `@/lib/nova/run-store` 引入；
+2. **落库只发生在服务端**：评分若由客户端回传，等于把打分权交给被测方，
+   因此 `/api/sandbox/run` 在收到 `done` 事件时直接落库；
+3. **读存储的页面必须 `export const dynamic = "force-dynamic"`**，
+   否则构建期会把当时的记录烘进静态产物。
 
 ---
 
@@ -90,7 +95,7 @@ npm run build      # 生产构建（同时校验类型）
    标准条款与代码位置的对应表。
 6. **本地 Agent 只进 `src/lib/nova/local-agents.ts` 的 `LOCAL_AGENTS`**。
    密钥永远只存环境变量名，不落进档案；未跑完验证的本地 Agent 不进排行榜与矩阵，
-   不编造综合评分。
+   不编造综合评分。开发/接入步骤见 `docs/local-agent.md`。
 
 ---
 
@@ -98,12 +103,10 @@ npm run build      # 生产构建（同时校验类型）
 
 | 项 | 现状 | 何时处理 |
 | :--- | :--- | :--- |
-| 无后端与持久化 | 刷新页面后交互状态丢失 | 接入真实后端时 |
-| `PULSAR` 等档案的子项读数为 0 | 未完成验证，刻意留空 | 该 Agent 真正跑完验证后 |
+| 持久化走单 JSON 文件 | `.nova/runs.json`，写入串行化但未跨进程加锁 | 需要多实例部署时换成真实数据库 |
 | 报告导出走 `Blob` + `ObjectURL` | 仅前端下载，无后端存档 | 需要服务端归档时 |
-| 沙盒剧本为同步生成 | 步数多时会一次性生成较长数组 | 单次运行超过 200 步时 |
-| 真实执行器按 `LLM_*` 环境变量绑定单端点 | 内置 Agent 仍走全局配置；本地 Agent 已支持各自端点 | 多个内置端点并行时才考虑注册表驱动 |
-| 本地 Agent 无历史评测记录 | 只能进入沙盒跑全新验证，无法查看对比 | 接入验证结果存储后 |
+| 名次快照需显式回写 | `saveRankSnapshot()` 目前未在渲染路径调用，排名涨跌恒为 0 | 需要在榜单渲染后落一次快照时 |
+| 单次运行的日志未落库 | 只存结论与阶段耗时，不存逐条事件 | 需要回放完整事件流时 |
 
 <!-- BEGIN:nextjs-agent-rules -->
 

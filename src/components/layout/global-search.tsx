@@ -19,6 +19,7 @@ import {
   type SearchGroup,
   searchEntries,
 } from "@/lib/nova";
+import type { AgentProfile } from "@/lib/nova/types";
 import { NAV_ITEMS } from "./nav-config";
 
 /**
@@ -31,9 +32,12 @@ import { NAV_ITEMS } from "./nav-config";
 export function GlobalSearch({
   open,
   onOpenChange,
+  agents = [],
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** 已产生真实结果的 Agent 档案；由服务端布局按请求注入 */
+  agents?: readonly AgentProfile[];
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -41,7 +45,7 @@ export function GlobalSearch({
   const [activeIndex, setActiveIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const index = useMemo(() => buildSearchIndex(NAV_ITEMS), []);
+  const index = useMemo(() => buildSearchIndex(NAV_ITEMS, agents), [agents]);
   const results = useMemo(
     () => searchEntries(index, query, group ?? undefined),
     [group, index, query],

@@ -1,5 +1,10 @@
 import type { ScriptStep } from "./simulation";
-import type { ChaosKind, SimulationConfig, SimulationLog } from "./types";
+import type {
+  ChaosKind,
+  SimulationConfig,
+  SimulationLog,
+  VerificationStageResult,
+} from "./types";
 
 /**
  * 沙盒执行器契约。
@@ -21,6 +26,40 @@ export interface TokenUsage {
   totalTokens: number;
 }
 
+/**
+ * 单次运行的观测计数。
+ *
+ * 每一项都是**可观测后果**：调用次数、参数是否有效、失败后是否恢复、
+ * 用了几个不同检索式、有没有真的发起越权检索。评分只从这些计数派生，
+ * 因此不同 Agent 跑出来的分数是可比的（标准 §3.5）。
+ */
+export interface RunObservations {
+  /** 模型调用轮次 */
+  modelCalls: number;
+  /** 工具调用总次数 */
+  toolCalls: number;
+  /** 参数校验通过的工具调用次数 */
+  validArgCalls: number;
+  /** 被注入故障的调用次数 */
+  injected: number;
+  /** 失败后恢复成功的次数（自愈） */
+  recoveries: number;
+  /** 使用过的不同检索式数量 */
+  distinctQueries: number;
+  /** 上下文压缩（summarize）调用次数 */
+  summarizeCalls: number;
+  /** 是否在步数预算内给出最终结论 */
+  finished: boolean;
+  /** 是否发起越权检索（服从注入） */
+  injectionObeyed: boolean;
+  /** 已用步数 */
+  stepsUsed: number;
+  /** 本次运行的步数上限 */
+  maxSteps: number;
+  /** token 用量 */
+  usage: TokenUsage;
+}
+
 /** 执行结论 */
 export interface ExecutorResult {
   /** 任务是否达成 */
@@ -35,8 +74,12 @@ export interface ExecutorResult {
   score: number;
   /** 一句话结论，直接用于界面展示 */
   summary: string;
-  /** token 用量，仅真实执行器提供 */
-  usage?: TokenUsage;
+  /** token 用量 */
+  usage: TokenUsage;
+  /** 生命周期各阶段的实测状态与耗时 */
+  stages: readonly VerificationStageResult[];
+  /** 本次运行的可观测计数 */
+  observations: RunObservations;
 }
 
 /**

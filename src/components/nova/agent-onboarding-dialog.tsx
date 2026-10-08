@@ -207,8 +207,9 @@ export function AgentOnboardingDialog() {
           <DialogTitle>接入本地 Agent</DialogTitle>
           <DialogDescription>
             NOVA 通过 OpenAI 兼容端点调用
-            Agent。下面三步依次确认端点、登记档案、 落地配置 ——
-            每一步的产物都可以直接复制。
+            Agent。下面三步依次确认端点、登记档案、落地配置 ——
+            每一步的产物都可以直接复制。如何在本地开发一个 Agent？见{" "}
+            <code className="font-mono">docs/local-agent.md</code>。
           </DialogDescription>
         </DialogHeader>
 

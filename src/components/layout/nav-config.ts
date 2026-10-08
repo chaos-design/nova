@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
+  BookOpen,
   Boxes,
   FlaskConical,
   LayoutDashboard,
@@ -52,7 +53,6 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         label: "Agent 注册表",
         caption: "Registry",
         icon: Boxes,
-        badge: "8",
       },
     ],
   },
@@ -77,6 +77,18 @@ export const NAV_SECTIONS: readonly NavSection[] = [
         label: "排行榜",
         caption: "Leaderboard & Reports",
         icon: Trophy,
+      },
+    ],
+  },
+  {
+    id: "manual",
+    label: "资料",
+    items: [
+      {
+        href: "/docs",
+        label: "文档中心",
+        caption: "Documentation",
+        icon: BookOpen,
       },
     ],
   },

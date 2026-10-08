@@ -2,46 +2,40 @@ import type { Metadata } from "next";
 import { PageHeader } from "@/components/layout/page-header";
 import { SandboxPlayground } from "@/components/nova/sandbox-playground";
 import {
-  AGENTS,
   CHAOS_KINDS,
-  DEFAULT_SIMULATION_CONFIG,
+  DEFAULT_SANDBOX_CONFIG,
   ENVIRONMENTS,
   LOCAL_AGENTS,
+  localAgentProfile,
 } from "@/lib/nova";
 
 export const metadata: Metadata = {
   title: "沙盒模拟器",
   description:
-    "自定义系统提示词、注入混沌故障并实时观察 Agent 的自我纠错过程。支持本地仿真与真实模型执行两种执行器。",
+    "自定义系统提示词、注入混沌故障并实时观察 Agent 的自我纠错过程。沙盒只走真实执行：结果由被测 Agent 的真实行为决定。",
 };
+
+/** 可投放的 Agent 由本地登记派生，读的是运行时登记，按请求渲染 */
+export const dynamic = "force-dynamic";
 
 /**
  * 沙盒模拟器（Sandbox Simulator）。
  *
- * 页面本身只做取数与说明，真正的交互（配置 → 剧本 → 播放）
+ * 页面本身只做取数与说明，真正的交互（配置 → 执行 → 事件流）
  * 全部收敛在 `SandboxPlayground` 这一个客户端组件里。
- *
- * 「真实执行是否可用」必须在服务端判定：密钥只存在于服务端环境变量，
- * 客户端最多只能知道一个布尔值。
  */
 export default function SandboxPage() {
-  const liveAvailable =
-    Boolean(process.env.LLM_BASE_URL && process.env.LLM_MODEL) ||
-    LOCAL_AGENTS.some((entry) => entry.endpoint.trim().length > 0);
+  const agents = LOCAL_AGENTS.map(localAgentProfile);
 
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Sandbox Simulator"
         title="沙盒模拟器"
-        subtitle="选定 Agent、写下系统提示词、注入网络延迟或畸形载荷，然后观察它如何在失败中自我纠正。两种执行器共用同一套混沌规则与评分口径，因此分数可以直接对照。"
+        subtitle="选定 Agent、写下系统提示词、注入网络延迟或畸形载荷，然后观察它如何在失败中自我纠正。沙盒只保留真实执行一条路径：分数由被测 Agent 的真实行为算出，可横向对照。"
       />
 
-      <SandboxPlayground
-        agents={AGENTS}
-        liveAvailable={liveAvailable}
-        localAgents={LOCAL_AGENTS}
-      />
+      <SandboxPlayground agents={agents} localAgents={LOCAL_AGENTS} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="nova-panel rounded-xl p-4 lg:col-span-2">
@@ -91,10 +85,12 @@ export default function SandboxPage() {
           </ul>
           <p className="mt-3 text-[0.6875rem] leading-relaxed text-muted-foreground">
             默认配置：
-            {DEFAULT_SIMULATION_CONFIG.environment === "stochastic"
-              ? "随机环境"
-              : "确定性环境"}
-            ，最大 {DEFAULT_SIMULATION_CONFIG.maxSteps} 步。
+            {
+              ENVIRONMENTS.find(
+                (item) => item.id === DEFAULT_SANDBOX_CONFIG.environment,
+              )?.label
+            }
+            ，最大 {DEFAULT_SANDBOX_CONFIG.maxSteps} 步。
           </p>
         </div>
       </div>

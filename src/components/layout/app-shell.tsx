@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { AgentProfile } from "@/lib/nova/types";
 import { CosmicBackground } from "./cosmic-background";
 import { GlobalSearch } from "./global-search";
 import { NovaSidebar } from "./nova-sidebar";
@@ -16,7 +17,14 @@ import { NovaTopBar } from "./nova-top-bar";
  * 常驻实例上。若由侧边栏与顶栏各自持有一份，会注册两个键盘监听，
  * 一次按键把弹窗开了又关。
  */
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  children,
+  agents = [],
+}: {
+  children: React.ReactNode;
+  /** 已产生真实结果的 Agent 档案，供全局搜索索引；由服务端布局注入 */
+  agents?: readonly AgentProfile[];
+}) {
   const [searchOpen, setSearchOpen] = useState(false);
 
   const toggleSearch = useCallback(() => {
@@ -52,16 +60,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </main>
         <footer className="border-t border-white/8 px-4 py-4 lg:px-8">
           <p className="text-xs text-muted-foreground/70">
-            NOVA 控制台 · 当前为演示数据层（mock），所有指标由
+            NOVA 控制台 · 所有指标来自本地真实运行记录，由{" "}
             <code className="mx-1 font-mono text-nova-accent/80">
-              src/lib/nova/mock-data.ts
+              src/lib/nova/run-store.ts
+            </code>{" "}
+            落库于{" "}
+            <code className="mx-1 font-mono text-nova-accent/80">
+              .nova/runs.json
             </code>
-            生成，不含真实评测结论。
+            ，不含预置演示数据。
           </p>
         </footer>
       </div>
 
-      <GlobalSearch open={searchOpen} onOpenChange={setSearchOpen} />
+      <GlobalSearch
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+        agents={agents}
+      />
     </div>
   );
 }

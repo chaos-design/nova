@@ -24,10 +24,21 @@ const PROBE_TIMEOUT_MS = 4_000;
 /** 这是一个 SSRF 原语，必须挡住云厂商的元数据地址 */
 const BLOCKED_HOSTS = [
   /^169\.254\./,
-  /^metadata\./i,
-  /^metadata$/i,
+  /^fd00:ec2::254$/i,
+  /^metadata(\..*)?$/i,
   /^instance-data$/i,
 ];
+
+/**
+ * 纯数字主机名（如 `http://2852039166/`，即整数编码的 169.254.x.x）
+ * 不合法模型服务地址，直接挡掉；IPv6 的 hostname 自带方括号，先剥掉再匹配。
+ */
+function isBlockedHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "");
+  return (
+    /^\d+$/.test(host) || BLOCKED_HOSTS.some((pattern) => pattern.test(host))
+  );
+}
 
 export async function POST(request: Request) {
   let endpoint: string;
@@ -82,7 +93,7 @@ function parseEndpoint(raw: string): ParsedEndpoint {
     return { error: `不支持的协议：${url.protocol}` };
   }
 
-  if (BLOCKED_HOSTS.some((pattern) => pattern.test(url.hostname))) {
+  if (isBlockedHost(url.hostname)) {
     return {
       error: "该主机不允许被探测",
       hint: "云厂商的元数据端点不是模型服务。",
@@ -99,9 +110,12 @@ async function probe(endpoint: string): Promise<EndpointProbe> {
 
   let response: Response;
   try {
+    // 重定向必须手动拦截：黑名单只保护初始 URL，
+    // 自动跟随会让一个受控端点把探针带进 169.254.169.254 这类内网地址
     response = await fetch(url, {
       method: "GET",
       headers: { Accept: "application/json" },
+      redirect: "manual",
       cache: "no-store",
       signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
@@ -122,6 +136,17 @@ async function probe(endpoint: string): Promise<EndpointProbe> {
   }
 
   const latencyMs = Date.now() - startedAt;
+
+  if (response.status >= 300 && response.status < 400) {
+    return {
+      reachable: true,
+      openaiCompatible: false,
+      models: [],
+      latencyMs,
+      message: `端点返回了重定向（${response.status}），NOVA 探针不跟随`,
+      hint: "模型清单端点应当直接响应内容；重定向通常意味着地址配错或被劫持。",
+    };
+  }
 
   if (response.status === 401 || response.status === 403) {
     return {

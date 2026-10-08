@@ -2,7 +2,7 @@
 
 import { cn } from "cn";
 import { Play, RotateCcw, ShieldAlert, Sparkles, Square } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { AgentIdentity } from "@/components/nova/agent-identity";
 import { LogStream } from "@/components/nova/log-stream";
 import { ScoreGauge } from "@/components/nova/score-gauge";
@@ -27,14 +27,11 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useSandboxRun } from "@/hooks/use-sandbox-run";
 import {
-  agentById,
-  buildSimulationPlan,
   CHAOS_KINDS,
-  DEFAULT_SIMULATION_CONFIG,
+  DEFAULT_SANDBOX_CONFIG,
   ENVIRONMENTS,
   gradeMeta,
   gradeOf,
@@ -43,7 +40,6 @@ import {
   MODEL_REGISTRY,
   resilienceFactor,
 } from "@/lib/nova";
-import type { ExecutorId } from "@/lib/nova/executor";
 import type {
   AgentProfile,
   ChaosInjection,
@@ -67,41 +63,29 @@ const INTENSITY_MAX = 100;
  */
 export function SandboxPlayground({
   agents,
-  liveAvailable,
   localAgents = [],
 }: {
+  /** 可被投放的 Agent 档案（由页面在服务端按本地登记派生） */
   agents: readonly AgentProfile[];
-  /** 服务端是否配置了真实模型；由页面在服务端判定后传入 */
-  liveAvailable: boolean;
-  /** 已登记的本地 Agent（可在沙盒里做真实试验） */
+  /** 已登记的本地 Agent（端点与密钥变量名在这里） */
   localAgents?: readonly LocalAgentEntry[];
 }) {
   const [config, setConfig] = useState<SimulationConfig>(() =>
     defaultConfig(agents[0]?.id ?? ""),
   );
-  const [executor, setExecutor] = useState<ExecutorId>("simulation");
 
-  // 选中的可能是内置 Agent，也可能是本地登记；两者在这里收敛成同一个 Profile
+  // 唯一的执行路径是真实执行：档案一律由本地登记派生
   const localEntry = localAgents.find((item) => item.id === config.agentId);
-  const agent = localEntry
-    ? localAgentProfile(localEntry)
-    : agentById(config.agentId);
-  const isLocalRun = localEntry !== undefined;
-  // 本地 Agent 一定可以走真实执行（端点自己的可达性由探针预先确认）；
-  // 内置 Agent 只有服务端配置了全局 LLM_* 才可用
-  const liveEnabled = isLocalRun || liveAvailable;
+  const agent =
+    (localEntry
+      ? localAgentProfile(localEntry)
+      : agents.find((item) => item.id === config.agentId)) ?? null;
   const run = useSandboxRun();
 
   const environment = ENVIRONMENTS.find(
     (item) => item.id === config.environment,
   );
-  const model = MODEL_REGISTRY.find((item) => item.id === agent.model);
-  /** 计划中的故障点数量：仅本地仿真可预先算出 */
-  const faultCount = useMemo(
-    () =>
-      buildSimulationPlan(config, agent).steps.filter((s) => s.chaos).length,
-    [config, agent],
-  );
+  const model = MODEL_REGISTRY.find((item) => item.id === agent?.model);
 
   const patch = (changes: Partial<SimulationConfig>) =>
     setConfig((prev) => ({ ...prev, ...changes }));
@@ -117,12 +101,9 @@ export function SandboxPlayground({
   const running = run.status === "running";
 
   const start = () => {
-    if (executor === "live") {
-      // 档案由服务端按 agentId 反查，客户端只传 id
-      void run.runRemote(config);
-      return;
-    }
-    void run.runLocal(config, agent);
+    if (!agent) return;
+    // 档案由服务端按 agentId 反查，客户端只传 id
+    void run.runRemote(config);
   };
 
   return (
@@ -140,44 +121,20 @@ export function SandboxPlayground({
           <CardContent className="space-y-5">
             <div className="space-y-2">
               <Label>执行器</Label>
-              <Tabs
-                value={executor}
-                onValueChange={(value) => setExecutor(value as ExecutorId)}
-              >
-                <TabsList className="w-full">
-                  <TabsTrigger value="simulation" className="flex-1">
-                    本地仿真
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="live"
-                    className="flex-1"
-                    disabled={!liveEnabled}
-                  >
-                    真实执行
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-              <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
-                {executor === "live"
-                  ? "真实调用大模型执行工具循环，混沌注入在服务端生效；结果完全取决于被测模型的真实行为。"
-                  : "按预生成剧本回放，无需网络与密钥，适合演示与回归对照。"}
-                {isLocalRun && (
-                  <span className="text-nova-cyan">
-                    {" "}
-                    本地试验：将调用 {localEntry.endpoint} 的 {localEntry.model}
-                    模型（密钥取自环境变量 {localEntry.apiKeyEnv}）。
-                  </span>
-                )}
-                {!liveEnabled && (
-                  <>
-                    {" "}
-                    <span className="text-nova-amber">
-                      真实执行需要在 .env.local 配置 LLM_BASE_URL / LLM_MODEL，
-                      或在 local-agents.ts 登记一个本地 Agent。
+              <div className="nova-panel rounded-lg px-3 py-2">
+                <p className="font-mono text-xs text-nova-cyan">真实执行</p>
+                <p className="mt-1 text-[0.6875rem] leading-relaxed text-muted-foreground">
+                  沙盒只保留真实执行一条路径：混沌注入在服务端生效，
+                  结果完全取决于被测 Agent 的真实行为。
+                  {localEntry && (
+                    <span className="text-nova-cyan">
+                      {" "}
+                      将调用 {localEntry.endpoint} 的 {localEntry.model} 模型
+                      （密钥取自环境变量 {localEntry.apiKeyEnv}）。
                     </span>
-                  </>
-                )}
-              </p>
+                  )}
+                </p>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -212,25 +169,35 @@ export function SandboxPlayground({
             </div>
 
             <div className="nova-panel rounded-lg p-3">
-              <AgentIdentity agent={agent} />
-              <div className="mt-3 flex items-center justify-between gap-2">
-                <span className="text-[0.6875rem] text-muted-foreground">
-                  韧性系数
-                </span>
-                <span className="font-mono text-xs text-nova-cyan">
-                  {resilienceFactor(agent).toFixed(2)}
-                </span>
-              </div>
-              <div className="mt-1 flex items-center justify-between gap-2">
-                <span className="text-[0.6875rem] text-muted-foreground">
-                  模型
-                </span>
-                <span className="truncate font-mono text-[0.6875rem] text-foreground/90">
-                  {model
-                    ? `${model.label} · ${model.contextWindow} ctx`
-                    : `${agent.model} · 本地端点`}
-                </span>
-              </div>
+              {agent ? (
+                <>
+                  <AgentIdentity agent={agent} />
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    <span className="text-[0.6875rem] text-muted-foreground">
+                      韧性系数
+                    </span>
+                    <span className="font-mono text-xs text-nova-cyan">
+                      {resilienceFactor(agent).toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <span className="text-[0.6875rem] text-muted-foreground">
+                      模型
+                    </span>
+                    <span className="truncate font-mono text-[0.6875rem] text-foreground/90">
+                      {model
+                        ? `${model.label} · ${model.contextWindow} ctx`
+                        : `${agent.model} · 本地端点`}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+                  还没有可投放的 Agent。先在{" "}
+                  <code className="font-mono">local-agents.ts</code>{" "}
+                  登记一条，或跑起仓库自带的执行体。
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -305,18 +272,16 @@ export function SandboxPlayground({
             <CardHeader>
               <CardTitle>运行控制台</CardTitle>
               <CardDescription>
-                {executor === "live" ? "真实执行" : "本地仿真"} ·{" "}
-                {executor === "live"
-                  ? (run.meta?.model ?? "等待投放")
-                  : `${config.maxSteps} 轮`}{" "}
-                ·{" "}
+                真实执行 · {run.meta?.model ?? "等待投放"} ·{" "}
                 {running
                   ? "正在执行"
                   : run.status === "completed"
                     ? "已结束"
                     : run.status === "failed"
                       ? "执行失败"
-                      : "待运行"}
+                      : run.status === "stopped"
+                        ? "已手动停止"
+                        : "待运行"}
               </CardDescription>
               <CardAction>
                 <div className="flex items-center gap-2">
@@ -451,7 +416,7 @@ export function SandboxPlayground({
               <CardDescription>
                 实时观察 Agent 的规划、工具调用与自我纠错过程
               </CardDescription>
-              {executor === "live" && run.meta && (
+              {run.meta && (
                 <CardAction>
                   <Badge
                     variant="outline"
@@ -487,7 +452,7 @@ export function SandboxPlayground({
           </CardDescription>
           <CardAction>
             <Badge variant="outline" className="font-mono text-[0.625rem]">
-              {faultCount} 处故障点
+              {config.chaos.filter((item) => item.enabled).length} 项已启用
             </Badge>
           </CardAction>
         </CardHeader>
@@ -572,7 +537,7 @@ export function SandboxPlayground({
 
 function defaultConfig(agentId: string): SimulationConfig {
   return {
-    ...DEFAULT_SIMULATION_CONFIG,
+    ...DEFAULT_SANDBOX_CONFIG,
     agentId,
     chaos: CHAOS_KINDS.map((item) => ({
       kind: item.kind,

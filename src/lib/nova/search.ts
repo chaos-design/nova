@@ -5,7 +5,7 @@ import {
   ENVIRONMENTS,
   MODEL_REGISTRY,
 } from "./constants";
-import { AGENTS } from "./mock-data";
+import type { AgentProfile } from "./types";
 
 /**
  * 全局搜索索引。
@@ -14,8 +14,9 @@ import { AGENTS } from "./mock-data";
  * 评测口径里的名词（能力向量 / 混沌注入 / 沙盒环境 / 可选模型）。凡是界面上
  * 看得到、用户可能用名字去找的东西都该在这里出现一次。
  *
- * 导航项由调用方注入而不是在这里 import：`components/layout/nav-config.ts`
- * 属于外壳层，领域层不允许反向依赖它。谁掌握路由，谁负责传入。
+ * 导航项与 Agent 档案都由调用方注入而不是在这里 import：
+ * `components/layout/nav-config.ts` 属于外壳层，领域层不允许反向依赖它；
+ * Agent 档案读的是运行时落库的真实结果，只有服务端页面拿得到。
  */
 
 /** 搜索结果的分组，决定展示顺序 */
@@ -65,6 +66,7 @@ function normalize(text: string): string {
  */
 export function buildSearchIndex(
   navItems: readonly SearchableNavItem[],
+  agents: readonly AgentProfile[] = [],
 ): SearchEntry[] {
   return [
     ...navItems.map<SearchEntry>((item) => ({
@@ -75,7 +77,7 @@ export function buildSearchIndex(
       keywords: item.href,
       href: item.href,
     })),
-    ...AGENTS.map<SearchEntry>((agent) => ({
+    ...agents.map<SearchEntry>((agent) => ({
       id: `agent:${agent.id}`,
       group: "Agent",
       title: `${agent.name} · ${agent.codename}`,
