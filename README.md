@@ -145,12 +145,8 @@ nova/
 │   ├── local-agent.md           # 本地 Agent 开发/接入指南
 │   └── nova-standard.md         # Agent 验证核心标准（评测口径定义）
 ├── examples/
-│   └── local-agent/             # 本地 Agent 示例与模板（零依赖 Node）
-│       ├── engine.mjs           # 画像引擎：行为策略 → 可观测工具调用
-│       ├── server.mjs           # 完整示例：工具调用循环（端口 43110）
-│       ├── minimal.mjs          # 最小实现：纯协议桩（端口 43111）
-│       ├── builtin-agents.mjs   # 内置 8 档案画像对照服务（npm run agent:personas，43210）
-│       └── template.mjs         # 快速创建新 Agent 的模板（端口 43220）
+│   └── local-agent/
+│       └── nova-agent.mjs       # 仓库自带的真实执行体（零依赖 Node，端口 43110）
 ├── public/
 ├── src/
 │   ├── app/

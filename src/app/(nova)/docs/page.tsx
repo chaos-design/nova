@@ -6,7 +6,7 @@ import {
   DevConfigSection,
   FaqSection,
   InteractionSection,
-  MinimalAgentSection,
+  LocalAgentRunnerSection,
   OnboardingSection,
   QuickStartSection,
   SandboxSection,
@@ -17,7 +17,7 @@ import {
 export const metadata: Metadata = {
   title: "文档中心",
   description:
-    "NOVA 控制台操作手册：快速开始、开发配置、界面导览、本地 Agent 接入与最小实现、沙盒与混沌口径、评分与证书规则、架构图、快捷键与常见问题。",
+    "NOVA 控制台操作手册：快速开始、开发配置、界面导览、本地 Agent 接入与自带执行体、沙盒与混沌口径、评分与证书规则、架构图、快捷键与常见问题。",
 };
 
 /** 目录顺序即阅读顺序，与章节组件一一对应 */
@@ -26,7 +26,7 @@ const TOC_ITEMS = [
   { id: "dev-config", index: "02", label: "开发配置" },
   { id: "tour", index: "03", label: "界面导览" },
   { id: "onboarding", index: "04", label: "接入本地 Agent" },
-  { id: "minimal-agent", index: "05", label: "最小实现 Agent" },
+  { id: "local-runner", index: "05", label: "仓库自带的本地 Agent" },
   { id: "sandbox", index: "06", label: "沙盒与混沌" },
   { id: "scoring", index: "07", label: "评分与证书" },
   { id: "architecture", index: "08", label: "架构与数据流" },
@@ -47,7 +47,7 @@ export default function DocsPage() {
       <PageHeader
         eyebrow="Documentation"
         title="文档中心"
-        subtitle="控制台操作手册：从启动、开发配置、界面导览到本地 Agent 接入与最小实现、混沌口径、评分规则与架构总览。左侧目录随阅读位置高亮，锚点直达。"
+        subtitle="控制台操作手册：从启动、开发配置、界面导览到本地 Agent 接入与自带执行体、混沌口径、评分规则与架构总览。左侧目录随阅读位置高亮，锚点直达。"
       />
 
       <div className="grid items-start gap-8 lg:grid-cols-[13rem_minmax(0,1fr)]">
@@ -60,7 +60,7 @@ export default function DocsPage() {
           <DevConfigSection />
           <TourSection />
           <OnboardingSection />
-          <MinimalAgentSection />
+          <LocalAgentRunnerSection />
           <SandboxSection />
           <ScoringSection />
           <ArchitectureSection />

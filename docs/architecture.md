@@ -41,20 +41,18 @@ Server Component、Client Component、Route Handler、脚本任务复用。
 
 ```mermaid
 flowchart TD
-    subgraph S["服务端（构建时 / 请求时各一次）"]
-        M["mock-data.ts<br/>确定性演示数据<br/>DEMO_EPOCH 锚点 + noise(seed)"]
-        LA["local-agents.ts<br/>本地 Agent 登记 → 中性先验档案"]
+    subgraph S["服务端（按请求取数）"]
+        M["run-store.ts<br/>真实运行记录<br/>.nova/runs.json"]
+        LA["local-agents.ts<br/>本地 Agent 登记"]
     end
     subgraph C["客户端"]
         PG["页面 Server Component"]
-        H1["useTelemetryStream<br/>种子 + 游标推进遥测采样"]
-        H2["useSandboxRun<br/>统一消费两种执行器事件"]
-        I["交互态：排序 / 选中 / 复测结果"]
+        H2["useSandboxRun<br/>消费 SSE 事件流"]
+        I["交互态：排序 / 选中 / 高亮"]
     end
-    M -->|"纯函数直出"| PG
-    LA -->|"无评分档案卡"| PG
-    PG -->|"props（首屏数据）"| H1
-    PG -->|"props"| H2
+    M -->|"派生档案 / 遥测 / 概览"| PG
+    LA -->|"可投放 Agent 名单"| PG
+    PG -->|"props（首屏数据）"| H2
     PG --> I
 ```
 
@@ -74,9 +72,10 @@ Route Handler 只做**无状态的服务端代理**，不保存、不编造任�
 - 向云厂商/本地模型发请求时由服务端统一处理超时与错误归一；
 - 探针是 SSRF 的天然入口，服务端统一实施黑名单与重定向拦截（见 §2.1）。
 
-**收益为零的事情不做**：所有页面数据仍由 `mock-data.ts` / `local-agents.ts`
-同步提供，首屏走 Server Component 直出，不绕 API。等真实后端就位时再把
-读路径换成 fetch，届时契约由 `src/lib/nova` 的类型定义直接生成。
+**收益为零的事情不做**：页面数据由 `run-store.ts` 直接读取本地存储
+（`local-agents.ts` 提供可投放名单），首屏走 Server Component 直出，不绕 API。
+等接入真实数据库或远端服务时，只需替换 `run-store.ts` 内部的读写实现，
+契约仍由 `src/lib/nova` 的类型定义保证。
 
 ### 2.1 两条真实执行链路
 
@@ -131,24 +130,26 @@ sequenceDiagram
 
 ---
 
-## 3. 确定性 mock 的设计
+## 3. 真实运行存储与可复现性
 
-演示数据最容易犯的错是「假装是真的」：用 `Date.now()`、用 `Math.random()`，
-结果每次刷新数字都变，页面被静态预渲染后时间戳还停留在构建那一刻。
+NOVA 不预置任何档案。界面上出现的每个数字都来自一次真实跑完的沙盒验证，
+落库在 `.nova/runs.json`（`run-store.ts`，带 `server-only`）：
 
-NOVA 的做法是**一切由序号与锚点决定**：
-
-| 机制 | 实现 | 解决的问题 |
+| 关注点 | 实现 | 说明 |
 | :--- | :--- | :--- |
-| **时间锚点** | `constants.ts` · `DEMO_EPOCH` | 所有 mock 时间戳相对锚点生成，页面可静态预渲染且文案稳定 |
-| **遥测纯函数** | `mock-data.ts` · `telemetryPointAt(index)` | 首屏种子与客户端后续采样连续，不产生 hydration 差异或曲线跳变 |
-| **确定性伪随机** | `mock-data.ts` · `noise(seed)` | 三角函数哈希代替 `Math.random()`，同一 seed 结果恒定 |
-| **剧本推导** | `simulation.ts` · `buildSimulationPlan(config, agent)` | 同一份配置永远得到同一次运行，便于复现与对照实验 |
-| **派生而非硬编码** | `mock-data.ts` · `createAgent` 只写能力向量，综合评分 / 评级 / 证书编号全部派生 | 单一事实来源，改一个分数不会漏改三处 |
+| **落库位置** | `run-store.ts` → `.nova/runs.json` | 单文件够用；写入经 Promise 链串行化，并发落库不互相覆盖 |
+| **落库时机** | `/api/sandbox/run` 收到 `done` 事件 | 放在服务端而非客户端回传 —— 否则评分等于被测方自己给自己打分 |
+| **档案派生** | `LOCAL_AGENTS` 提供身份，运行记录提供评分与状态 | 没跑过的 Agent 不会出现在档案、榜单与矩阵里 |
+| **证书签发** | `recordRun` 按标准 §5 三条规则判定 | 评级 ≥ B、状态已验证、已完成验证，缺一不可 |
+| **页面取数** | 服务端页面按请求读取 | 读存储的页面必须 `force-dynamic`，否则构建期的记录会被烘进静态产物 |
 
-交互态同样遵守确定性：能力矩阵的**复测抖动**由 `retestDelta(agentId, vector)`
-的字符串哈希推导（±1.5 分），同一格重复点击结果恒定；复测落回原位时，
-该行的综合评分由 `compositeScore` 实时重新派生，雷达图与拆解同步更新。
+**可复现的部分**：混沌排布（`scheduleFaults`）与故障代价（`faultPenalty`）
+都是纯函数，同一份配置永远得到同一张故障表；工具本身也是确定性的 ——
+混沌不是"让工具不稳定"，而是在稳定的工具外面包一层按剧本作恶的代理。
+因此不同 Agent 的分数可以横向对照。
+
+**不可复现的部分**：被测 Agent 自己的决策。这正是要被观测的东西，
+不该也不能被固定下来。
 
 ![能力矩阵：Agent × 能力向量量表，点击单元格触发定向复测](images/matrix.png)
 
@@ -156,22 +157,16 @@ NOVA 的做法是**一切由序号与锚点决定**：
 
 ## 4. 状态管理：只持有游标
 
-两个 hook 的共同设计是**状态最小化**：
+hook 的设计原则是**状态最小化**：
 
 ```ts
-// 遥测流：只保存一个游标 + 一个滚动窗口
-{ points, cursor, paused }
-
-// 沙盒剧本：只保存一个游标 + 一个状态
-{ cursor, status }
+// 沙盒运行：只保存事件流累积出的 6 个字段
+{ status, logs, meta, result, error, score }
 ```
 
-日志、得分、进度全部由「剧本/窗口 + 游标」**派生**，不单独存一份。
-好处是「状态与展示不一致」这类 bug 在结构上就不存在，
-暂停、重放、重置都退化为移动游标。
-
-代价是每次推进都要重算派生值 —— 但剧本规模是几十步、窗口是几十个点，
-这个代价可以忽略，不值得为它引入 memo 缓存层。
+日志、进度、得分全部由执行器推来的事件**累积**而成，不单独存一份派生副本。
+好处是「状态与展示不一致」这类 bug 在结构上就不存在：
+唯一的事实来源是事件流，UI 只是它的投影。
 
 ---
 
@@ -181,11 +176,11 @@ NOVA 的做法是**一切由序号与锚点决定**：
 
 | 组件 | 为什么必须在客户端 |
 | :--- | :--- |
-| `telemetry-hub` | 定时推进遥测采样，种子由服务端传入 |
-| `live-log-terminal` | 定时推送事件 |
-| `sandbox-playground` | 表单配置 + 剧本播放 |
+| `telemetry-hub` | 指标切换与图表交互，采样点由服务端传入 |
+| `live-log-terminal` | 日志列表渲染 |
+| `sandbox-playground` | 表单配置 + SSE 事件流消费 |
 | `leaderboard-table` | 表头排序、行选中、报告下载 |
-| `capability-matrix-board` | 单元格复测、行选中 |
+| `capability-matrix-board` | 行选中与跳转复测 |
 | `nav-list` / `mobile-nav` / `live-clock` | `usePathname` / 抽屉状态 / 秒级时钟 |
 | `app-shell` | ⌘K 快捷键与搜索弹窗是全局单例，状态挂在常驻外壳上 |
 | `nova-sidebar` | 收起态 + localStorage 持久化 |
@@ -301,24 +296,24 @@ NOVA 的做法是**一切由序号与锚点决定**：
   在服务端和浏览器一定算出同一串字符。
 
 **实现**：`format.ts` 集中定义 `DISPLAY_TIME_ZONE` 与全部格式化函数；
-`mock-data.ts` 的遥测横坐标标签也经由它生成，不在页面里各自 `toLocaleString`。
+`run-store.ts` 的遥测横坐标标签也经由它生成，不在页面里各自 `toLocaleString`。
 
 ---
 
-## 8. 接入真实后端
+## 8. 换成真实后端
 
-建议路径，按投入产出排序：
+当前的持久化是单文件（`.nova/runs.json`），要换成数据库或远端服务时：
 
-1. **先接读路径**：在 `src/lib/nova/` 新增 `client.ts`，把 `AGENTS`、
-   `VERIFICATION_RUNS`、`TELEMETRY_SEED` 换成 `fetch` 调用（建议配合
-   Next.js 的 `cache()` / `revalidateTag`）。页面层改动量为零。
-2. **再接遥测流**：把 `telemetry-hub` 的 `setInterval` 换成 SSE / WebSocket 订阅。
-   `useTelemetryStream` 的对外接口（`points` / `paused` / `toggle`）无需变化。
-3. **最后接执行器**：把 `buildSimulationPlan` 换成一个"提交任务 → 轮询/订阅状态"的调用。
-   `SimulationPlan` / `ScriptStep` 的类型就是前后端之间的契约，
-   可直接用于定义服务端返回体。
-4. **能力复测**：`capability-matrix-board` 里的 `retestDelta` 换成真实请求，
-   现有的 loading / 禁用态交互逻辑可以原样保留。
+1. **只改 `run-store.ts` 内部**：对外的函数签名（`listRuns` / `verifiedAgents` /
+   `clusterStats` / `telemetrySeries` / `recordRun`）保持不变，
+   页面、组件、hook 一行都不用动。
+2. **把落库搬到写入侧**：若引入消息队列或后台 worker，`recordRun` 的调用点
+   （`/api/sandbox/run` 的 `done` 分支）改成投递任务即可，评分口径不变。
+3. **多实例部署**：单文件的串行写锁只在进程内有效，换成数据库事务
+   （或分布式锁）后再上多副本。
+4. **实时遥测**：目前遥测点由运行记录派生（一次运行一个点）。
+   需要秒级曲线时，再加一条 SSE 通道推送运行时采样，`TelemetryHub` 的
+   入参形状（`TelemetryPoint[]`）不需要变化。
 
 **不要做的事**：不要在页面里直接写 `fetch`。领域层是数据访问的边界，
 页面只消费领域层暴露的函数与类型。

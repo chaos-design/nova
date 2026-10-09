@@ -71,8 +71,9 @@
 - 数据访问的边界是 `src/lib/nova/`；页面与组件不直接 `fetch`。
 - 语义色统一走 `theme.ts` 的映射（状态/等级/向量），界面主色只用
   `text-nova-accent` / `bg-nova-accent`；六个亮色调不散落在组件里。
-- `mock-data.ts` 不引入 `Math.random()` 与 `Date.now()`；派生值不硬编码；
-  改能力向量必须检查下游（评级、排名、故障代价、证书签发）。
+- 界面上没有预置数据：档案 / 评分 / 遥测全部由 `.nova/runs.json` 里的真实运行
+  记录派生（`run-store.ts`）；落库只发生在服务端，读存储的页面必须 `force-dynamic`。
+- 派生值不硬编码；改评分口径必须同步改 `docs/nova-standard.md`。
 - 密钥只存环境变量名，不落进档案；未跑完验证的本地 Agent 不进排行榜与矩阵。
 - 时间格式化只走 `format.ts`，固定北京时间。
 - 新增依赖或修改 Next.js 配置后跑一次 `npx next typegen`。

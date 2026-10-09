@@ -275,23 +275,23 @@ export function QuickStartSection() {
       <Steps
         items={[
           {
-            title: "启动内置画像对照服务（推荐，一条命令）",
+            title: "启动仓库自带的执行体（推荐，一条命令）",
             body: (
               <>
-                <Mono>npm run agent:personas</Mono>
-                ，得到 <Mono>http://127.0.0.1:43210/v1</Mono>
-                ——mock 数据里的 8 个内置档案（ORION/QUASAR/…/NOCTA）全部变成
-                真实 Agent，可在沙盒逐一投放「真实执行」。
+                <Mono>npm run agent:local</Mono>
+                ，得到 <Mono>http://127.0.0.1:43110/v1</Mono>
+                ——零依赖、无需模型服务，已在注册表登记为 NOVA-LOCAL，
+                可直接在沙盒投放。
               </>
             ),
           },
           {
-            title: "或者起单个示例 / 真实模型",
+            title: "或者起一个真实模型服务",
             body: (
               <>
-                零依赖示例 <Mono>node examples/local-agent/server.mjs</Mono>
-                （43110）；或 <Mono>ollama serve</Mono> +{" "}
-                <Mono>ollama pull qwen2.5:14b</Mono>（11434，真实模型）。
+                <Mono>ollama serve</Mono> + <Mono>ollama pull qwen2.5:14b</Mono>
+                （11434），或 vLLM / LM Studio 任意 OpenAI 兼容端点； 在{" "}
+                <Mono>local-agents.ts</Mono> 登记后即可投放。
               </>
             ),
           },
@@ -308,8 +308,8 @@ export function QuickStartSection() {
         ]}
       />
       <Callout title="数据来自真实运行">
-        页面上的档案、评分、遥测曲线全部来自本地真实跑出来的运行记录：
-        登记一个 Agent → 在沙盒投放 → 结论落库到 <Mono>.nova/runs.json</Mono>。
+        页面上的档案、评分、遥测曲线全部来自本地真实跑出来的运行记录： 登记一个
+        Agent → 在沙盒投放 → 结论落库到 <Mono>.nova/runs.json</Mono>。
         刷新页面不会凭空产生数字；一次都没跑过时，相关区块如实显示空态。
         会打到外部世界的请求只有「沙盒真实执行」与「端点探针」，
         两者都指向你登记的本地端点。
@@ -336,24 +336,9 @@ export function DevConfigSection() {
             "npm run dev / npm run start",
           ),
           row(
-            "43210",
-            <>内置 8 档案画像对照服务（mock 档案的真实化身，见第 05 节）</>,
-            "npm run agent:personas",
-          ),
-          row(
             "43110",
-            "仓库自带示例 Agent（完整工具调用循环）",
-            "node examples/local-agent/server.mjs",
-          ),
-          row(
-            "43111",
-            "最小实现 Agent（纯协议桩，见第 05 节）",
-            "node examples/local-agent/minimal.mjs",
-          ),
-          row(
-            "43220",
-            "Agent 模板（复制即用，见第 05 节）",
-            "node examples/local-agent/template.mjs",
+            "仓库自带的真实执行体（NOVA-LOCAL，见第 05 节）",
+            "npm run agent:local",
           ),
           row("11434", "Ollama 默认端口（如使用）", "ollama serve"),
         ]}
@@ -409,8 +394,8 @@ export function DevConfigSection() {
           row(<Mono>npm run dev</Mono>, "开发服务器（Turbopack）"),
           row(<Mono>npm run build</Mono>, "生产构建（同时校验类型）"),
           row(
-            <Mono>npm run agent:personas</Mono>,
-            "启动内置 8 档案画像对照服务（端口 43210）",
+            <Mono>npm run agent:local</Mono>,
+            "启动仓库自带的本地 Agent（端口 43110）",
           ),
           row(<Mono>npm run typecheck</Mono>, "仅 TypeScript 类型检查"),
           row(<Mono>npm run lint</Mono>, "Biome 检查（只读）"),
@@ -461,14 +446,14 @@ export function TourSection() {
         src="/manual/agents-local-registry.png"
         alt="Agent 注册表的本地接入分区"
         height={900}
-        caption="本地接入分区：SOLVER（Ollama 样例）、STUB（零依赖示例）与 8 个内置档案的画像对照体（需 npm run agent:personas）"
+        caption="本地接入分区：登记在 local-agents.ts 的本地 Agent，未跑完验证前没有评分"
       />
       <H3>能力矩阵 /matrix</H3>
       <P>
         Agent ×
-        能力向量的二维量表。点击任意单元格触发该维度的**定向复测**：结果带 ±1.5
-        分的确定性抖动落回原位，该行综合评分与雷达图同步重新派生；「清除复测」一键回到基线。
-        点击行首 Agent
+        能力向量的二维量表。每一格都是最近一次真实验证的实测得分；点单元格会把你送到
+        沙盒去真的再跑一次 ——
+        复测必须产出一条新的运行记录，不允许在本地凭空改分。 点击行首 Agent
         在下方查看向量拆解（雷达图实线为当前得分，虚线为集群平均）。
       </P>
       <Figure
@@ -486,7 +471,7 @@ export function TourSection() {
       <Figure
         src="/manual/sandbox-live-run.png"
         alt="沙盒真实执行截图"
-        caption="真实执行：STUB 在混沌注入下重试自愈并拒绝注入，99.5 分达成"
+        caption="真实执行：NOVA-LOCAL 在混沌注入下重试自愈并拒绝注入，99.5 分达成"
       />
       <H3>排行榜与报告 /leaderboard</H3>
       <P>
@@ -511,7 +496,7 @@ export function OnboardingSection() {
       id="onboarding"
       index="04"
       title="接入一个本地 Agent"
-      intro="NOVA 不绑定任何框架：只要你的 Agent 暴露一个 OpenAI 兼容的 HTTP 端点，就能被沙盒执行器驱动。全流程四步，仓库自带的 STUB 示例可以全程对照。"
+      intro="NOVA 不绑定任何框架：只要你的 Agent 暴露一个 OpenAI 兼容的 HTTP 端点，就能被沙盒执行器驱动。全流程四步，仓库自带的 NOVA-LOCAL 可以全程对照。"
     >
       <H3>协议约定（唯一的硬性门槛）</H3>
       <InfoTable
@@ -564,10 +549,10 @@ export function OnboardingSection() {
             title: "起端点",
             body: (
               <>
-                自己实现（文档中心附最小桩），或直接运行仓库自带示例：{" "}
-                <Mono>node examples/local-agent/server.mjs</Mono> →{" "}
+                自己实现（按下方协议写两个路由），或直接运行仓库自带的执行体：{" "}
+                <Mono>npm run agent:local</Mono> →{" "}
                 <Mono>http://127.0.0.1:43110/v1</Mono>（模型{" "}
-                <Mono>nova-stub-agent</Mono>，零依赖、无需模型服务）。
+                <Mono>nova-local-agent</Mono>，零依赖、无需模型服务）。
               </>
             ),
           },
@@ -655,7 +640,7 @@ export function OnboardingSection() {
           ],
           [
             "示例 Agent 起不来",
-            "43110 端口被占用：结束占用进程或改 server.mjs 的 PORT",
+            "43110 端口被占用：结束占用进程，或用 NOVA_AGENT_PORT 换端口",
           ],
         ]}
       />
@@ -663,168 +648,91 @@ export function OnboardingSection() {
   );
 }
 
-export function MinimalAgentSection() {
+/**
+ * 章节 05：仓库自带的本地 Agent。
+ *
+ * 这一节替换了原先的「最小实现 Agent / 模板 / 画像对照服务」三小节 ——
+ * 那三者都是为了把 mock 档案演成可运行体而存在的过渡物，已随 mock 一并移除。
+ * 现在仓库只自带一个真实执行体，文档也只描述它。
+ */
+export function LocalAgentRunnerSection() {
   return (
     <DocsSection
-      id="minimal-agent"
+      id="local-runner"
       index="05"
-      title="最小实现 Agent"
-      intro="一个能通过探针、能被沙盒真实执行驱动的 Agent，最小只需要 40 行。它不会发起工具调用，因此适合验证「协议接线」与观察失败路径；完整的工具调用循环见同目录的 server.mjs（第 03 节的 STUB）。"
+      title="仓库自带的本地 Agent"
+      intro="examples/local-agent/nova-agent.mjs 是仓库自带、开箱即跑的真实 Agent：零依赖、不需要任何模型服务，已登记为 NOVA-LOCAL，可直接在沙盒投放。"
     >
-      <P>
-        仓库收录了可直接运行的版本：
-        <Mono>node examples/local-agent/minimal.mjs</Mono>
-        （端口 43111）。以下是完整源码：
-      </P>
+      <H3>一条命令跑起来</H3>
       <CodeBlock
         lines={[
-          'import { createServer } from "node:http";',
-          "",
-          "const PORT = 43111;",
-          'const MODELS = ["my-local-agent-v1"];',
-          "",
-          "createServer((req, res) => {",
-          '  const url = req.url ?? "";',
-          "",
-          '  if (url.endsWith("/models")) {',
-          '    res.writeHead(200, { "Content-Type": "application/json" });',
-          "    res.end(JSON.stringify({",
-          '      object: "list",',
-          '      data: MODELS.map((id) => ({ id, object: "model", owned_by: "local" })),',
-          "    }));",
-          "    return;",
-          "  }",
-          "",
-          '  if (url.endsWith("/chat/completions")) {',
-          '    let body = "";',
-          '    req.on("data", (c) => (body += c));',
-          '    req.on("end", () => {',
-          "      // 真实 Agent：在这里把请求转发给你的模型，",
-          "      // 并把模型产出的 tool_calls 按 OpenAI 结构透传出去。",
-          '      res.writeHead(200, { "Content-Type": "application/json" });',
-          "      res.end(JSON.stringify({",
-          '        id: "chatcmpl_1",',
-          '        object: "chat.completion",',
-          "        model: MODELS[0],",
-          "        choices: [{",
-          "          index: 0,",
-          '          message: { role: "assistant", content: "目标达成。" },',
-          '          finish_reason: "stop",',
-          "        }],",
-          "        usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },",
-          "      }));",
-          "    });",
-          "    return;",
-          "  }",
-          "",
-          '  res.writeHead(404).end("{}");',
-          '}).listen(PORT, "127.0.0.1", () => {',
-          "  console.log(`最小 Agent 已启动：http://127.0.0.1:${PORT}/v1`);",
-          "});",
+          "# 另开一个终端",
+          "npm run agent:local",
+          "# NOVA 本地 Agent 已启动：http://127.0.0.1:43110/v1（模型 nova-local-agent）",
         ]}
       />
-      <H3>这 40 行里每个部分的职责</H3>
+      <P>
+        它实现了第 04 节要求的两个路由：<Mono>GET /v1/models</Mono> 与{" "}
+        <Mono>POST /v1/chat/completions</Mono>（支持 <Mono>tools</Mono> 与{" "}
+        <Mono>tool_choice</Mono>）。
+      </P>
+
+      <H3>它不是按脚本回放的桩</H3>
+      <List>
+        <Li>
+          无状态、可重放：不保存会话，每一轮都从 NOVA 回传的完整{" "}
+          <Mono>messages</Mono> 里重建状态；
+        </Li>
+        <Li>
+          决策来自观测：读的是工具真实返回的 JSON（条数、字段、
+          错误文案），据此决定重试 / 换检索式 / 压缩 / 交卷；
+        </Li>
+        <Li>
+          结论是真算出来的：交叉比对两个结果集的字段集与声明条数，
+          数据缺口由集合差算出，平均相关度由实际 <Mono>score</Mono> 求均值；
+        </Li>
+        <Li>
+          注入只拒绝、不服从：识别越权指令后在正文显式拒绝并继续原任务，
+          永不发起 <Mono>export=all</Mono> 这类越权检索。
+        </Li>
+      </List>
+
+      <H3>一次运行里的完整链路</H3>
       <InfoTable
-        headers={["片段", "职责", "替换点"]}
+        headers={["轮次", "行为", "被观测到的计数"]}
         rows={[
-          row(
-            <Mono>GET /models</Mono>,
-            "模型清单，探针据此判定协议兼容并列出可选模型",
-            "返回你真实的模型 id 列表",
-          ),
-          row(
-            <Mono>POST /chat/completions</Mono>,
-            "接收完整对话历史（含 role:tool 的工具结果），返回结论或 tool_calls",
-            <>标注「真实 Agent」处：转发给你的模型 / 工具循环 / 规则引擎</>,
-          ),
-          row(
-            <Mono>usage</Mono>,
-            "token 用量，沙盒统计区据此展示",
-            "按真实用量上报（示例为固定值）",
-          ),
-          row(<Mono>404 兜底</Mono>, "未知路由显式拒绝，不静默吞掉", "保持"),
+          [
+            "1",
+            "按任务书主题发起第一个侧面的 external_search",
+            "distinctQueries +1",
+          ],
+          [
+            "2",
+            "失败则按原检索式重试，否则开启第二个侧面",
+            "recoveries +1（判定为自愈）",
+          ],
+          ["3", "用 summarize 压缩两个来源的记录", "summarizeCalls +1"],
+          ["4", "输出交叉比对结论（含真实数据缺口）并交卷", "finished = true"],
         ]}
       />
-      <Callout title="预期行为：一步交卷会被扣分" tone="warn">
-        这个桩从不发起 <Mono>tool_calls</Mono>
-        ，沙盒会按口径扣 12 分并提示「结论未达成交付标准」——这不是
-        bug，而是观察失败路径的
-        教学用例。想看满分链路（两次检索、失败重试、拒绝注入），运行第 02
-        节的完整示例。
+      <Callout title="为什么这些计数重要">
+        四大能力向量的得分就是从这四个数里算出来的（标准 §3.5）。
+        沙盒只统计可观测行为，不采信 Agent 的自述 —— 所以一个只会说"我完成了"的
+        Agent 拿不到分。
       </Callout>
-      <H3>更快的方式：模板三步创建</H3>
+
+      <H3>换成你自己的 Agent</H3>
       <P>
-        <Mono>examples/local-agent/template.mjs</Mono>
-        基于共享画像引擎（<Mono>engine.mjs</Mono>
-        ），把上面 40 行的协议层全部抽掉，只留 5 处可改的配置。复制为{" "}
-        <Mono>my-agent.mjs</Mono> 后：
+        照第 04 节的协议写两个路由即可（端口别撞 43110），然后在{" "}
+        <Mono>src/lib/nova/local-agents.ts</Mono> 的 <Mono>LOCAL_AGENTS</Mono>{" "}
+        里追加一条登记 —— <Mono>model</Mono> 必须与 <Mono>/v1/models</Mono>{" "}
+        返回的 id 一致。刷新注册表，它就会出现在「本地接入」分区；
+        投放一次沙盒验证后，才会拿到真实评分并进入排行榜与能力矩阵。
       </P>
-      <Steps
-        items={[
-          {
-            title: "改配置（5 处）",
-            body: (
-              <>
-                模型 id（①，与 <Mono>LOCAL_AGENTS.model</Mono>{" "}
-                一致）、端口（②，默认 43220）、检索次数（③，≥
-                2）、失败是否重试（④，决定「自愈」行为）、 是否服从注入（⑤，true
-                = 高危失败演示）。检索式按需替换。
-              </>
-            ),
-          },
-          {
-            title: "启动",
-            body: (
-              <>
-                <Mono>node examples/local-agent/my-agent.mjs</Mono>
-                ，向导探测 <Mono>http://127.0.0.1:43220/v1</Mono> 应显示「OpenAI
-                兼容 ✓」与你的模型。
-              </>
-            ),
-          },
-          {
-            title: "登记并投放",
-            body: (
-              <>
-                在 <Mono>LOCAL_AGENTS</Mono> 追加一条登记（向导第 3
-                步会生成可粘贴的片段），沙盒选「真实执行」即可投放。
-              </>
-            ),
-          },
-        ]}
-      />
-      <H3>内置 8 个档案的真实化身：画像对照服务</H3>
-      <P>
-        mock 数据里的 8 个内置档案（ORION、QUASAR、LYRA、HELIX、ATLAS、VEGA、
-        PULSAR、NOCTA）都有对应的本地对照体：<Mono>npm run agent:personas</Mono>{" "}
-        在端口 43210 一次性暴露 8 个模型，每个模型的行为策略与其档案画像一致
-        （已预登记在 <Mono>LOCAL_AGENTS</Mono>，<Mono>agt-local-*</Mono>）。
-      </P>
-      <InfoTable
-        headers={["对照体", "行为策略", "沙盒预期"]}
-        rows={[
-          row(
-            "ORION / QUASAR / LYRA / HELIX",
-            "多次检索 · 失败重试 · 拒绝注入（LYRA 三次检索，HELIX 记忆型检索式）",
-            "高分达成（ORION 确定性环境 100 分）",
-          ),
-          row(
-            "ATLAS / VEGA",
-            "失败不重试：ATLAS 换检索式继续，VEGA 降级单源结论",
-            "故障代价基本保留（无自愈返还）",
-          ),
-          row(
-            "PULSAR",
-            "反复扩展检索、永不交卷",
-            "步数耗尽，判定未达成（复现「排队中」画像）",
-          ),
-          row(
-            "NOCTA",
-            "服从工具输出中的越权指令（export=all）",
-            "高危失败（复现回归异常；需启用「提示词注入」）",
-          ),
-        ]}
-      />
+      <Callout title="档案不是预置的">
+        NOVA 不再维护任何内置档案。没跑过验证的 Agent 就是"待验证"，
+        界面不会给它编一个分数。
+      </Callout>
     </DocsSection>
   );
 }
@@ -1165,7 +1073,7 @@ export function FaqSection() {
       id="faq"
       index="10"
       title="数据说明与常见问题"
-      intro="演示数据的边界、当前已知限制，以及最常被问到的问题。"
+      intro="真实运行数据的边界、当前已知限制，以及最常被问到的问题。"
     >
       <H3>真实运行存储的三条铁律</H3>
       <List>
@@ -1189,7 +1097,7 @@ export function FaqSection() {
         rows={[
           [
             "页面上的分数是真的吗？",
-            "是「按标准口径确定性生成的演示数据」，不是真实评测结论。口径本身（权重、代价、评级阈值）与真实执行器完全一致，接入真实后端后数据源可整体替换。",
+            "不是。界面上的档案、评分、遥测全部来自本机真实跑完的沙盒验证，落库在 .nova/runs.json；一次都没跑过时页面显示空态而不是预置数据。",
           ],
           [
             "报告如何导出？",
@@ -1205,7 +1113,7 @@ export function FaqSection() {
           ],
           [
             "内置 Agent（ORION 等）能跑真实执行吗？",
-            "能——npm run agent:personas 启动画像对照服务后，8 个内置档案都有对应的本地对照体（agt-local-orion 等，见第 05 节），沙盒选「真实执行」即可逐一投放。",
+            "能——npm run agent:local 启动仓库自带的执行体（NOVA-LOCAL，见第 05 节），沙盒投放即可；换成你自己的端点时，在 local-agents.ts 里登记一条。",
           ],
           [
             "在哪里改混沌强度上限？",
