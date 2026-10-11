@@ -264,6 +264,10 @@ pnpm run agent:coder      # http://127.0.0.1:43112/v1（模型 nova-coder-agent�
 - 两者职责互斥（调研 ↔ 工程），是 Converse Lab **意图分发**的验证对象：
   选定两个专家、执行方式切「意图分发」后，调研类消息应路由给
   NOVA-RESEARCH，工程类消息应路由给 NOVA-CODER；
+- 人格提示词独立在各包的 `persona.md`，用 XML 自定义标签分节
+  （`<role>` / `<responsibility>` / `<workflow>` / `<tool-output-policy>`）：
+  标签原文随提示词发给上游，启动时校验配对（缺文件 / 空文件 / 超 8000
+  字符 / 标签未配对都会拒绝启动），改人格不需要动代码；
 - 工具原样透传：`external_search` / `summarize` 由 NOVA 执行器真实代执行，
   人格层不改写任何工具语义；
 - 上游端点与密钥沿用根配置 `agent.llm`（`.env` 的 `NOVA_LLM_*`），

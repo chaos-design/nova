@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 /**
  * NOVA-RESEARCH 入口：调研专员的 OpenAI 兼容人格代理端点。
  *
@@ -15,11 +16,17 @@
  *   3. 环境变量：进程环境 > 项目根 .env
  */
 
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentConfig, projectRoot } from "@chaos-design/config";
-import { toClientResponse, toUpstreamPayload } from "./persona.mjs";
+import {
+  createPersonaLayer,
+  findTagIssues,
+  PERSONA_MAX_CHARS,
+  toClientResponse,
+} from "./persona.mjs";
 
 const AGENT_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -61,7 +68,55 @@ function bootstrap() {
   return { config, sources };
 }
 
+/**
+ * 加载并校验 persona.md。
+ *
+ * 人格提示词独立成 MD 文件（支持 XML 自定义标签分节），为的是改人格
+ * 不动代码。问题必须在启动时暴露：缺文件、空文件、超长、标签没配对，
+ * 任何一条都会让每次请求带着残缺人格出门 —— 带着可读的退出理由失败。
+ */
+function loadPersona() {
+  const file = join(AGENT_DIR, "persona.md");
+
+  let text;
+  try {
+    text = readFileSync(file, "utf8").replace(/^\uFEFF/, "");
+  } catch {
+    console.error(
+      `✗ 缺少人格提示词文件：${file}\n` +
+        `  提示：persona.md 与 index.mjs 同目录，用 XML 标签分节写这个 Agent 的领域人格。`,
+    );
+    process.exit(1);
+  }
+
+  const prompt = text.trim();
+  if (prompt.length === 0) {
+    console.error(`✗ 人格提示词是空的：${file}`);
+    process.exit(1);
+  }
+
+  if (prompt.length > PERSONA_MAX_CHARS) {
+    console.error(
+      `✗ 人格提示词超过 ${PERSONA_MAX_CHARS} 字符（当前 ${prompt.length}）：${file}\n` +
+        `  提示：人格随每轮请求整段发送，请精简后再启动。`,
+    );
+    process.exit(1);
+  }
+
+  const issues = findTagIssues(prompt);
+  if (issues.length > 0) {
+    console.error(
+      `✗ persona.md 的 XML 标签存在结构问题：\n  - ${issues.join("\n  - ")}\n` +
+        `  提示：每个 <tag> 都需要配对的 </tag>，标签名只允许字母、数字与连字符。`,
+    );
+    process.exit(1);
+  }
+
+  return createPersonaLayer(prompt);
+}
+
 const { config, sources } = bootstrap();
+const PERSONA = loadPersona();
 
 const PORT = config.agent.port;
 const HOSTNAME = config.agent.hostname;
@@ -153,7 +208,7 @@ export async function handleChat(body, deps = {}) {
   }
 
   const upstream = deps.upstream ?? callUpstream;
-  const payload = toUpstreamPayload(body, UPSTREAM_MODEL);
+  const payload = PERSONA.toUpstreamPayload(body, UPSTREAM_MODEL);
   const completion = toClientResponse(await upstream(payload), MODEL);
 
   if (!completion) {
@@ -240,6 +295,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     );
     console.log(
       `配置来源：${sources.map((s) => s.replace(projectRoot(), ".")).join(" · ")}`,
+    );
+    console.log(
+      `人格提示词：persona.md（${PERSONA.prompt.length} 字符，XML 标签分节）`,
     );
     console.log(`上游真实大模型：${UPSTREAM_MODEL} @ ${UPSTREAM_BASE_URL}`);
   });

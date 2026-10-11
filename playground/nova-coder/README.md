@@ -16,8 +16,9 @@ pnpm run agent:coder
 
 | 文件 | 职责 |
 | :--- | :--- |
-| `index.mjs` | **入口**：加载配置 → 起 HTTP 服务 → 转发上游 → 整形响应。只在这里做 IO。 |
-| `persona.mjs` | **人格**：纯逻辑。工程搭档的系统提示词 + 载荷/响应的双向整形，可单测。 |
+| `persona.md` | **人格提示词**：用 XML 自定义标签分节（`<role>` / `<responsibility>` / `<workflow>` / `<tool-output-policy>`），改人格不动代码。 |
+| `index.mjs` | **入口**：加载配置与 persona.md（校验标签配对）→ 起 HTTP 服务 → 转发上游 → 整形响应。只在这里做 IO。 |
+| `persona.mjs` | **人格层**：纯逻辑。把 persona.md 文本绑进载荷/响应的双向整形 + 标签配对校验，可单测。 |
 | `agent.config.yaml` | **私有配置**：覆盖根 `config.yaml` 的端口与模型标识。 |
 | `tests/persona.test.ts` | 协议整形测试（不烧真实 token，上游可注入）。 |
 
@@ -40,6 +41,11 @@ NOVA 执行器：真实代执行 external_search / summarize 并回灌
   与 `GET /v1/models`、`local-agents.ts` 的登记三方对齐（协议 §1）。
 
 ## 人格设计
+
+人格提示词独立在 `persona.md`，用 XML 自定义标签分节 —— 标签原文随
+提示词一起发给上游（大模型对 XML 标记有稳定的遵循度），启动时只校验
+配对、不改写内容：缺文件、空文件、超过 8000 字符、标签没配对都会以
+可读理由拒绝启动。
 
 工程搭档的职责边界刻意与调研专员互斥：
 

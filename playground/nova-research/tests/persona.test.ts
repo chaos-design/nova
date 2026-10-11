@@ -1,9 +1,11 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { HttpError, handleChat } from "../index.mjs";
 import {
-  PERSONA_PROMPT,
+  createPersonaLayer,
+  findTagIssues,
+  PERSONA_MAX_CHARS,
   toClientResponse,
-  toUpstreamPayload,
 } from "../persona.mjs";
 
 /**
@@ -13,6 +15,11 @@ import {
  * 对话历史必须原样到达上游，响应又必须以登记的模型 id 回去。
  * 这里直接打纯函数与 handleChat（注入桩上游），不烧一次真实 token。
  */
+
+const FIXTURE_PROMPT = [
+  "<role>你是测试人格。</role>",
+  "<workflow>按步骤执行。</workflow>",
+].join("\n");
 
 const NOVA_MESSAGES = [
   { role: "system", content: "你是一个运行在 NOVA 沙盒中的受控 Agent。" },
@@ -29,22 +36,24 @@ const TOOLS = [
   },
 ];
 
-describe("toUpstreamPayload", () => {
-  it("把人格系统消息插在最前，NOVA 的 system 提示词原样跟在其后", () => {
-    const payload = toUpstreamPayload(
+describe("createPersonaLayer", () => {
+  it("人格系统消息插在最前，NOVA 的 system 提示词原样跟在其后", () => {
+    const layer = createPersonaLayer(FIXTURE_PROMPT);
+    const payload = layer.toUpstreamPayload(
       { messages: NOVA_MESSAGES, tools: TOOLS },
       "agnes-3.0-flash",
     );
 
     expect(payload.messages).toHaveLength(3);
     expect(payload.messages[0].role).toBe("system");
-    expect(payload.messages[0].content).toBe(PERSONA_PROMPT);
+    expect(payload.messages[0].content).toBe(FIXTURE_PROMPT);
     expect(payload.messages[1]).toEqual(NOVA_MESSAGES[0]);
     expect(payload.messages[2]).toEqual(NOVA_MESSAGES[1]);
   });
 
   it("工具与 tool_choice 原样透传，采样参数沿用调用方的值", () => {
-    const payload = toUpstreamPayload(
+    const layer = createPersonaLayer(FIXTURE_PROMPT);
+    const payload = layer.toUpstreamPayload(
       {
         messages: NOVA_MESSAGES,
         tools: TOOLS,
@@ -62,7 +71,8 @@ describe("toUpstreamPayload", () => {
   });
 
   it("空工具数组不转发（部分兼容端点会 400），并强制非流式", () => {
-    const payload = toUpstreamPayload(
+    const layer = createPersonaLayer(FIXTURE_PROMPT);
+    const payload = layer.toUpstreamPayload(
       { messages: NOVA_MESSAGES, tools: [], stream: true },
       "agnes-3.0-flash",
     );
@@ -73,13 +83,69 @@ describe("toUpstreamPayload", () => {
   });
 
   it("messages 缺失时退化为人格单消息，采样参数取默认值", () => {
-    const payload = toUpstreamPayload({}, "agnes-3.0-flash");
+    const layer = createPersonaLayer(FIXTURE_PROMPT);
+    const payload = layer.toUpstreamPayload({}, "agnes-3.0-flash");
 
     expect(payload.messages).toEqual([
-      { role: "system", content: PERSONA_PROMPT },
+      { role: "system", content: FIXTURE_PROMPT },
     ]);
     expect(payload.temperature).toBe(0.2);
     expect(payload.max_tokens).toBe(2000);
+  });
+});
+
+describe("findTagIssues", () => {
+  it("配对良好（含嵌套与连字符标签）返回空数组", () => {
+    const text = [
+      "<role>身份",
+      "  <rules>",
+      "  <rule-a>规则一</rule-a>",
+      "  </rules>",
+      "</role>",
+      "1 < 2 且 a<b 属于正文比较符，不是标签。",
+    ].join("\n");
+
+    expect(findTagIssues(text)).toEqual([]);
+  });
+
+  it("未闭合的标签报出行号与标签名", () => {
+    const issues = findTagIssues("<role>\n正文没有闭合");
+
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("<role>");
+    expect(issues[0]).toContain("未闭合");
+  });
+
+  it("多余的闭合标签报出", () => {
+    const issues = findTagIssues("正文</workflow>收尾");
+
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("</workflow>");
+  });
+
+  it("交叉嵌套为每个错配的闭合标签报出问题", () => {
+    const issues = findTagIssues("<role>\n<workflow>\n</role>\n</workflow>");
+
+    // </role> 撞上栈顶的 <workflow>、</workflow> 撞上残余的 <role>，
+    // 两次错配各自报一条，都带行号
+    expect(issues).toHaveLength(2);
+    expect(issues[0]).toContain("交叉嵌套");
+    expect(issues[1]).toContain("交叉嵌套");
+  });
+});
+
+describe("persona.md 与人格层的一致性", () => {
+  it("入口加载的就是仓库里的 persona.md（trim 后）", () => {
+    const filePrompt = readFileSync(
+      new URL("../persona.md", import.meta.url),
+      "utf8",
+    )
+      .replace(/^\uFEFF/, "")
+      .trim();
+
+    expect(filePrompt.length).toBeGreaterThan(0);
+    expect(filePrompt.length).toBeLessThanOrEqual(PERSONA_MAX_CHARS);
+    expect(findTagIssues(filePrompt)).toEqual([]);
   });
 });
 
@@ -168,8 +234,16 @@ describe("handleChat", () => {
       },
     );
 
-    expect(captured.model).toBe("agnes-3.0-flash");
-    expect(captured.messages[0].content).toBe(PERSONA_PROMPT);
+    const filePrompt = readFileSync(
+      new URL("../persona.md", import.meta.url),
+      "utf8",
+    ).trim();
+
+    expect(captured?.model).toBe("agnes-3.0-flash");
+    expect(captured?.messages?.[0]).toEqual({
+      role: "system",
+      content: filePrompt,
+    });
     expect(completion.model).toBe("nova-research-agent");
     expect(completion.choices[0].message.content).toBe("调研结论…");
   });
