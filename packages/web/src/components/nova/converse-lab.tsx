@@ -9,10 +9,12 @@ import {
   ChevronDown,
   CircleCheck,
   LoaderCircle,
+  Pencil,
   Plus,
   RotateCcw,
   ShieldAlert,
   Square,
+  Trash2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { LogStream } from "@/components/nova/log-stream";
@@ -61,44 +63,78 @@ import {
   localAgentProfile,
 } from "@/lib/nova";
 
-/** 可视化配置在浏览器 localStorage 里的键；仅存于本机浏览器 */
-const OVERRIDES_STORAGE_KEY = "nova:converse:agent-overrides";
-
-/** 从 localStorage 读可视化配置；损坏或缺失一律回退为空（沿用 env 默认） */
-function loadStoredOverrides(): ConverseOverrides {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(OVERRIDES_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const pick = (value: unknown) =>
-      typeof value === "string" && value.trim() ? value.trim() : undefined;
-    return {
-      endpoint: pick(parsed.endpoint),
-      model: pick(parsed.model),
-      apiKey: pick(parsed.apiKey),
-    };
-  } catch {
-    return {};
-  }
+/** 一条模型连接配置（浏览器 localStorage 管理的档案） */
+export interface AgentConnectionProfile {
+  id: string;
+  /** 展示名，如「.env 默认」「Agnes 直连」 */
+  name: string;
+  endpoint: string;
+  model: string;
+  /** 留空 = 沿用 .env 的 NOVA_LLM_API_KEY */
+  apiKey?: string;
 }
 
-function storeOverrides(overrides: ConverseOverrides): void {
-  try {
-    window.localStorage.setItem(
-      OVERRIDES_STORAGE_KEY,
-      JSON.stringify(overrides),
-    );
-  } catch {
-    // 隐私模式 / 配额满：配置只在本次会话生效，不影响验证流程
-  }
-}
+/** 内置档案：沿用登记条目 / .env，不出现在 localStorage 里、不可编辑删除 */
+const ENV_PROFILE_ID = "__env__";
 
-function clearStoredOverrides(): void {
+const PROFILES_STORAGE_KEY = "nova:converse:profiles";
+const ACTIVE_PROFILE_KEY = "nova:converse:active-profile";
+/** 旧版单配置键：读到时迁移为一条档案后废弃 */
+const LEGACY_OVERRIDES_KEY = "nova:converse:agent-overrides";
+
+/** 从 localStorage 读配置档案列表与激活 id；损坏或缺失一律回退为空 */
+function loadStoredProfiles(): {
+  profiles: AgentConnectionProfile[];
+  activeId: string | null;
+} {
+  if (typeof window === "undefined") return { profiles: [], activeId: null };
   try {
-    window.localStorage.removeItem(OVERRIDES_STORAGE_KEY);
+    const raw = window.localStorage.getItem(PROFILES_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    const profiles = Array.isArray(parsed)
+      ? parsed.filter(
+          (item): item is AgentConnectionProfile =>
+            typeof item === "object" &&
+            item !== null &&
+            typeof (item as AgentConnectionProfile).id === "string" &&
+            typeof (item as AgentConnectionProfile).name === "string",
+        )
+      : [];
+    const activeId = window.localStorage.getItem(ACTIVE_PROFILE_KEY);
+
+    // 旧版单配置迁移：变成一条档案并激活，之后废弃旧键
+    if (
+      profiles.length === 0 &&
+      window.localStorage.getItem(LEGACY_OVERRIDES_KEY)
+    ) {
+      try {
+        const legacy = JSON.parse(
+          window.localStorage.getItem(LEGACY_OVERRIDES_KEY) ?? "{}",
+        ) as Record<string, unknown>;
+        if (legacy.endpoint && legacy.model) {
+          const migrated: AgentConnectionProfile = {
+            id: `profile-${Date.now()}`,
+            name: "自定义配置",
+            endpoint: String(legacy.endpoint),
+            model: String(legacy.model),
+            apiKey: legacy.apiKey ? String(legacy.apiKey) : undefined,
+          };
+          window.localStorage.setItem(
+            PROFILES_STORAGE_KEY,
+            JSON.stringify([migrated]),
+          );
+          window.localStorage.setItem(ACTIVE_PROFILE_KEY, migrated.id);
+          window.localStorage.removeItem(LEGACY_OVERRIDES_KEY);
+          return { profiles: [migrated], activeId: migrated.id };
+        }
+      } catch {
+        // 旧键损坏：忽略，按空档案处理
+      }
+    }
+
+    return { profiles, activeId: activeId || null };
   } catch {
-    // 同上：读取失败也只影响下一次打开
+    return { profiles: [], activeId: null };
   }
 }
 
@@ -159,6 +195,80 @@ export function ConverseLab({
     node.scrollTop = node.scrollHeight;
   }, [converse.turns.length, lastLogCount, lastTurn?.status]);
 
+  // 连接配置档案：首帧与 SSR 一致（内置 .env 默认），挂载后再读 localStorage，
+  // 避免 hydration 不一致
+  const [profiles, setProfiles] = useState<AgentConnectionProfile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  // 「模型配置」弹窗可由模型下拉里的入口打开
+  const [editorOpen, setEditorOpen] = useState(false);
+  useEffect(() => {
+    const stored = loadStoredProfiles();
+    setProfiles(stored.profiles);
+    setActiveProfileId(stored.activeId);
+  }, []);
+
+  // 内置 .env 档案：不进 localStorage、不可编辑删除
+  const envProfile: AgentConnectionProfile = {
+    id: ENV_PROFILE_ID,
+    name: ".env 默认",
+    endpoint: localEntry?.endpoint ?? "",
+    model: localEntry?.model ?? "agnes-3.0-flash",
+  };
+  const allProfiles = [envProfile, ...profiles];
+  const activeProfile =
+    allProfiles.find((item) => item.id === activeProfileId) ?? envProfile;
+  // 每轮请求随 body 下发的覆盖值：内置档案即为「无覆盖」
+  const overrides: ConverseOverrides =
+    activeProfile.id === ENV_PROFILE_ID
+      ? {}
+      : {
+          endpoint: activeProfile.endpoint,
+          model: activeProfile.model,
+          ...(activeProfile.apiKey ? { apiKey: activeProfile.apiKey } : {}),
+        };
+
+  const persistProfiles = (
+    next: AgentConnectionProfile[],
+    activeId: string | null,
+  ) => {
+    setProfiles(next);
+    setActiveProfileId(activeId);
+    try {
+      window.localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(next));
+      if (activeId && activeId !== ENV_PROFILE_ID) {
+        window.localStorage.setItem(ACTIVE_PROFILE_KEY, activeId);
+      } else {
+        window.localStorage.removeItem(ACTIVE_PROFILE_KEY);
+      }
+    } catch {
+      // 隐私模式 / 配额满：配置只在本次会话生效
+    }
+  };
+
+  const saveProfile = (profile: AgentConnectionProfile) => {
+    const exists = profiles.some((item) => item.id === profile.id);
+    const next = exists
+      ? profiles.map((item) => (item.id === profile.id ? profile : item))
+      : [...profiles, profile];
+    // 新增或编辑后即激活：刚保存的配置就是用户想用的
+    persistProfiles(next, profile.id);
+    // 端点/模型变了，历史上下文没有意义
+    reset();
+  };
+
+  const deleteProfile = (id: string) => {
+    persistProfiles(
+      profiles.filter((item) => item.id !== id),
+      activeProfileId === id ? null : activeProfileId,
+    );
+  };
+
+  const selectProfile = (id: string) => {
+    persistProfiles(profiles, id === ENV_PROFILE_ID ? null : id);
+    // 切换连接即清空会话：跨端点/模型的历史没有意义
+    reset();
+  };
+
   const quickSend = (text: string) => {
     if (agent && !converse.sending)
       void converse.send(agent.id, text, overrides);
@@ -168,27 +278,6 @@ export function ConverseLab({
     if (!agent || converse.sending || draft.trim().length === 0) return;
     quickSend(draft);
     setDraft("");
-  };
-
-  // 可视化配置：首帧与 SSR 一致（空覆盖 = 沿用 env 默认），挂载后再读 localStorage，
-  // 避免 hydration 不一致
-  const [overrides, setOverridesState] = useState<ConverseOverrides>({});
-  // 「连接配置」编辑器可由模型下拉里的入口打开
-  const [editorOpen, setEditorOpen] = useState(false);
-  useEffect(() => {
-    setOverridesState(loadStoredOverrides());
-  }, []);
-
-  const handleOverridesChange = (next: ConverseOverrides) => {
-    const cleaned = Object.fromEntries(
-      Object.entries(next).filter(([, value]) => value),
-    ) as ConverseOverrides;
-    setOverridesState(cleaned);
-    if (Object.keys(cleaned).length === 0) {
-      clearStoredOverrides();
-    } else {
-      storeOverrides(cleaned);
-    }
   };
 
   return (
@@ -202,10 +291,6 @@ export function ConverseLab({
           agentId={agentId}
           onAgentChange={setAgentId}
           sending={converse.sending}
-          overrides={overrides}
-          onOverridesChange={handleOverridesChange}
-          editorOpen={editorOpen}
-          onEditorOpenChange={setEditorOpen}
         />
         <VerificationCases
           completed={totals.completedTurns}
@@ -214,6 +299,18 @@ export function ConverseLab({
           onPick={quickSend}
         />
         <VerificationScope />
+
+        {/* 模型配置管理弹窗：新增 / 编辑 / 删除 / 切换连接档案 */}
+        <AgentConfigDialog
+          open={editorOpen}
+          onOpenChange={setEditorOpen}
+          entry={localEntry ?? null}
+          profiles={profiles}
+          activeProfileId={activeProfileId}
+          onSelect={selectProfile}
+          onSave={saveProfile}
+          onDelete={deleteProfile}
+        />
       </aside>
 
       {/* 主栏：会话累计条 + 验证记录流（独立滚动）+ 沉底输入区 */}
@@ -252,7 +349,9 @@ export function ConverseLab({
             sending={converse.sending}
             onStop={converse.stop}
             hasAgent={agent !== null}
-            model={agent?.model ?? ""}
+            profiles={allProfiles}
+            activeProfileId={activeProfileId}
+            onSelectProfile={selectProfile}
             onOpenConfig={() => setEditorOpen(true)}
             onQuickCase={quickSend}
           />
@@ -272,27 +371,13 @@ function VerificationConfig({
   agentId,
   onAgentChange,
   sending,
-  overrides,
-  onOverridesChange,
-  editorOpen,
-  onEditorOpenChange,
 }: {
   localAgents: readonly LocalAgentEntry[];
   agents: readonly AgentProfile[];
   agentId: string;
   onAgentChange: (id: string) => void;
   sending: boolean;
-  overrides: ConverseOverrides;
-  onOverridesChange: (overrides: ConverseOverrides) => void;
-  /** 编辑器可由模型下拉入口远程打开，因此提为可控状态 */
-  editorOpen: boolean;
-  onEditorOpenChange: (open: boolean) => void;
 }) {
-  const entry = localAgents.find((item) => item.id === agentId);
-  const customized = Boolean(
-    overrides.endpoint || overrides.model || overrides.apiKey,
-  );
-
   return (
     <Card>
       <CardHeaderBlock title="验证配置" hint="被验证对象与执行约束" />
@@ -319,18 +404,6 @@ function VerificationConfig({
           </Select>
         </div>
 
-        {entry && (
-          <ConfigEditor
-            entry={entry}
-            overrides={overrides}
-            customized={customized}
-            disabled={sending}
-            open={editorOpen}
-            onOpenChange={onEditorOpenChange}
-            onOverridesChange={onOverridesChange}
-          />
-        )}
-
         <Separator />
 
         <ul className="space-y-1.5 text-[0.6875rem] leading-relaxed text-muted-foreground">
@@ -345,8 +418,8 @@ function VerificationConfig({
             <span aria-hidden="true" className="text-nova-cyan">
               ·
             </span>
-            端点/模型默认读仓库根 .env；界面自定义保存在浏览器 localStorage，
-            密钥值只随请求透传、服务端不落任何存储。
+            端点/模型默认读仓库根 .env；连接档案在输入卡模型下拉里管理，
+            保存在浏览器 localStorage，密钥值只随请求透传、服务端不落任何存储。
           </li>
         </ul>
       </CardContent>
@@ -355,109 +428,97 @@ function VerificationConfig({
 }
 
 /**
- * 模型配置：编辑态是弹窗（Dialog），展示态留在侧栏。
+ * 模型配置管理弹窗。
  *
- * 展示态读「覆盖值 ?? 登记默认」；弹窗里只改覆盖值，保存进
- * localStorage 并在后续每轮请求里随 body 下发。打开方式有二：
- * 本模块的「编辑配置」按钮、模型下拉里的「模型配置…」。
+ * 连接档案在 localStorage 里增删改：列表视图切换激活档案，
+ * 表单视图新增 / 编辑单条（端点、模型、密钥）。内置的「.env 默认」
+ * 档案不进存储、不可编辑删除，作为无覆盖的兜底。
  */
-function ConfigEditor({
-  entry,
-  overrides,
-  customized,
-  disabled,
+function AgentConfigDialog({
   open,
   onOpenChange,
-  onOverridesChange,
+  entry,
+  profiles,
+  activeProfileId,
+  onSelect,
+  onSave,
+  onDelete,
 }: {
-  entry: LocalAgentEntry;
-  overrides: ConverseOverrides;
-  customized: boolean;
-  disabled: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onOverridesChange: (overrides: ConverseOverrides) => void;
+  /** 当前目标 Agent 的登记条目：.env 默认档案与表单占位符的来源 */
+  entry: LocalAgentEntry | null;
+  profiles: readonly AgentConnectionProfile[];
+  /** null = 激活的是内置 .env 默认档案 */
+  activeProfileId: string | null;
+  onSelect: (id: string) => void;
+  onSave: (profile: AgentConnectionProfile) => void;
+  onDelete: (id: string) => void;
 }) {
+  // null = 列表视图；{ id } = 新增（无 id）或编辑（有 id）表单视图
+  const [editing, setEditing] = useState<{ id?: string } | null>(null);
+  const [name, setName] = useState("");
   const [endpoint, setEndpoint] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
 
-  // 打开时预填当前生效值（含模型下拉远程打开的路径）
+  // 打开弹窗 / 进入表单时预填
   useEffect(() => {
-    if (!open) return;
-    setEndpoint(overrides.endpoint ?? entry.endpoint);
-    setModel(overrides.model ?? entry.model);
-    setApiKey(overrides.apiKey ?? "");
-  }, [open, entry, overrides]);
+    if (!open) {
+      setEditing(null);
+      return;
+    }
+    if (editing) {
+      const existing = editing.id
+        ? profiles.find((item) => item.id === editing.id)
+        : undefined;
+      setName(existing?.name ?? `配置 ${profiles.length + 1}`);
+      setEndpoint(existing?.endpoint ?? entry?.endpoint ?? "");
+      setModel(existing?.model ?? entry?.model ?? "");
+      setApiKey(existing?.apiKey ?? "");
+    }
+  }, [open, editing, profiles, entry]);
 
   const save = () => {
-    onOverridesChange({
-      endpoint: endpoint.trim() || undefined,
-      model: model.trim() || undefined,
+    if (!name.trim() || !endpoint.trim() || !model.trim()) return;
+    onSave({
+      id: editing?.id ?? `profile-${Date.now()}`,
+      name: name.trim(),
+      endpoint: endpoint.trim(),
+      model: model.trim(),
       apiKey: apiKey.trim() || undefined,
     });
-    onOpenChange(false);
+    setEditing(null);
   };
 
+  const envEntry = entry;
+
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2">
-        <p className="nova-mono-label mr-auto text-[0.625rem] text-muted-foreground">
-          连接配置
-        </p>
-        {customized && (
-          <Badge
-            variant="outline"
-            className="border-nova-accent/40 text-[0.5625rem] text-nova-accent"
-          >
-            已自定义 · localStorage
-          </Badge>
-        )}
-        <div className="flex items-center gap-1">
-          {customized && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 px-2 text-[0.6875rem] text-muted-foreground"
-              disabled={disabled}
-              onClick={() => onOverridesChange({})}
-            >
-              恢复默认
-            </Button>
-          )}
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 px-2 text-[0.6875rem] text-muted-foreground"
-            disabled={disabled}
-            onClick={() => onOpenChange(true)}
-          >
-            编辑配置
-          </Button>
-        </div>
-      </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-base">模型配置</DialogTitle>
+          <DialogDescription className="text-xs leading-relaxed">
+            {editing
+              ? "保存进浏览器 localStorage，密钥只随请求透传、服务端不落任何存储。"
+              : "连接档案保存在浏览器 localStorage；默认读取仓库根 .env（NOVA_LLM_*），密钥只随请求透传。"}
+          </DialogDescription>
+        </DialogHeader>
 
-      <dl className="space-y-1.5 rounded-lg border border-white/8 bg-white/2 px-3 py-2.5 font-mono text-[0.6875rem] leading-relaxed">
-        <ConfigRow label="端点" value={overrides.endpoint ?? entry.endpoint} />
-        <ConfigRow label="模型" value={overrides.model ?? entry.model} />
-        <ConfigRow
-          label="密钥"
-          value={overrides.apiKey ? "已保存于浏览器" : `env:${entry.apiKeyEnv}`}
-        />
-      </dl>
-
-      {/* 编辑态：弹窗 */}
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-base">模型配置</DialogTitle>
-            <DialogDescription className="text-xs leading-relaxed">
-              默认读取仓库根 .env（NOVA_LLM_*）；自定义保存在浏览器
-              localStorage，密钥只随请求透传、服务端不落任何存储。
-            </DialogDescription>
-          </DialogHeader>
-
+        {editing ? (
           <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="cfg-name" className="text-xs">
+                配置名称
+              </Label>
+              <Input
+                id="cfg-name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="如：Agnes 直连 / 本地 Ollama"
+                className="h-8 text-xs"
+              />
+            </div>
             <div className="space-y-1.5">
               <Label htmlFor="cfg-endpoint" className="text-xs">
                 端点（OpenAI 兼容，含 /v1）
@@ -484,7 +545,8 @@ function ConfigEditor({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="cfg-api-key" className="text-xs">
-                密钥（留空则沿用 .env 的 {entry.apiKeyEnv}）
+                密钥（留空则沿用 .env 的{" "}
+                {envEntry?.apiKeyEnv ?? "NOVA_LLM_API_KEY"}）
               </Label>
               <Input
                 id="cfg-api-key"
@@ -497,32 +559,127 @@ function ConfigEditor({
               />
             </div>
           </div>
+        ) : (
+          <div className="space-y-1.5">
+            <button
+              type="button"
+              onClick={() => onSelect(ENV_PROFILE_ID)}
+              className={cn(
+                "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors",
+                activeProfileId === null || activeProfileId === ENV_PROFILE_ID
+                  ? "border-nova-accent/40 bg-nova-accent/8"
+                  : "border-white/8 bg-white/2 hover:border-white/15",
+              )}
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium">
+                  .env 默认
+                  {(activeProfileId === null ||
+                    activeProfileId === ENV_PROFILE_ID) && (
+                    <span className="nova-mono-label ml-2 text-[0.5625rem] text-nova-accent">
+                      当前
+                    </span>
+                  )}
+                </p>
+                <p className="mt-0.5 truncate font-mono text-[0.625rem] text-muted-foreground">
+                  {envEntry?.model ?? "agnes-3.0-flash"}
+                </p>
+              </div>
+            </button>
 
-          <DialogFooter className="gap-2">
+            {profiles.map((profile) => (
+              <div
+                key={profile.id}
+                className={cn(
+                  "flex items-center gap-1 rounded-lg border px-3 py-2 transition-colors",
+                  activeProfileId === profile.id
+                    ? "border-nova-accent/40 bg-nova-accent/8"
+                    : "border-white/8 bg-white/2",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => onSelect(profile.id)}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <p className="truncate text-xs font-medium">
+                    {profile.name}
+                    {activeProfileId === profile.id && (
+                      <span className="nova-mono-label ml-2 text-[0.5625rem] text-nova-accent">
+                        当前
+                      </span>
+                    )}
+                  </p>
+                  <p className="mt-0.5 truncate font-mono text-[0.625rem] text-muted-foreground">
+                    {profile.model} · {profile.endpoint}
+                  </p>
+                </button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`编辑 ${profile.name}`}
+                  className="size-6 text-muted-foreground hover:text-foreground"
+                  onClick={() => setEditing({ id: profile.id })}
+                >
+                  <Pencil className="size-3" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`删除 ${profile.name}`}
+                  className="size-6 text-muted-foreground hover:text-nova-rose"
+                  onClick={() => onDelete(profile.id)}
+                >
+                  <Trash2 className="size-3" />
+                </Button>
+              </div>
+            ))}
+
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-full text-xs"
+              onClick={() => setEditing({})}
+            >
+              <Plus />
+              新增配置
+            </Button>
+          </div>
+        )}
+
+        <DialogFooter className="gap-2">
+          {editing ? (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-xs"
+                onClick={() => setEditing(null)}
+              >
+                取消
+              </Button>
+              <Button
+                size="sm"
+                className="text-xs"
+                disabled={!name.trim() || !endpoint.trim() || !model.trim()}
+                onClick={save}
+              >
+                保存
+              </Button>
+            </>
+          ) : (
             <Button
               size="sm"
               variant="outline"
               className="text-xs"
               onClick={() => onOpenChange(false)}
             >
-              取消
+              关闭
             </Button>
-            <Button size="sm" className="text-xs" onClick={save}>
-              保存
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-function ConfigRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex gap-2">
-      <dt className="shrink-0 text-muted-foreground/70">{label}</dt>
-      <dd className="min-w-0 break-all text-foreground/90">{value}</dd>
-    </div>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1085,7 +1242,9 @@ function DraftComposer({
   sending,
   onStop,
   hasAgent,
-  model,
+  profiles,
+  activeProfileId,
+  onSelectProfile,
   onOpenConfig,
   onQuickCase,
 }: {
@@ -1095,9 +1254,13 @@ function DraftComposer({
   sending: boolean;
   onStop: () => void;
   hasAgent: boolean;
-  /** 当前生效模型标识（默认读 .env，可被弹窗配置覆盖） */
-  model: string;
-  /** 打开模型配置弹窗 */
+  /** 全部连接档案（含内置 .env 默认），供下拉切换 */
+  profiles: readonly AgentConnectionProfile[];
+  /** null = 激活的是内置 .env 默认档案 */
+  activeProfileId: string | null;
+  /** 切换激活的连接档案 */
+  onSelectProfile: (id: string) => void;
+  /** 打开模型配置管理弹窗 */
   onOpenConfig: () => void;
   /** 快捷发起一条验证用例（+ 菜单） */
   onQuickCase: (text: string) => void;
@@ -1112,6 +1275,13 @@ function DraftComposer({
           value={draft}
           onChange={(event) => onDraftChange(event.target.value)}
           onKeyDown={(event) => {
+            // Enter 直接发送（中文输入法选词回车除外），Shift+Enter 换行
+            if (event.key === "Enter" && !event.shiftKey) {
+              if (event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              onSubmit();
+              return;
+            }
             if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
               event.preventDefault();
               onSubmit();
@@ -1120,7 +1290,7 @@ function DraftComposer({
           rows={2}
           placeholder={
             hasAgent
-              ? "提出后续修改要求 / 告诉 Agent 你想让它做什么…"
+              ? "提出后续修改要求 / 告诉 Agent 你想让它做什么…（Enter 发送）"
               : "先在左侧「验证配置」选择一个目标 Agent"
           }
           className="min-w-0 resize-none border-none bg-transparent px-1.5 py-1 text-sm shadow-none focus-visible:ring-0"
@@ -1189,7 +1359,7 @@ function DraftComposer({
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label="选择模型"
+                  aria-label="选择连接配置"
                   disabled={!hasAgent || sending}
                   onMouseEnter={() => {
                     if (!hasAgent || sending) return;
@@ -1206,20 +1376,28 @@ function DraftComposer({
                 onMouseLeave={() => setModelMenu(false)}
               >
                 <DropdownMenuLabel className="flex items-center justify-between text-xs">
-                  模型
+                  连接配置
                   <span className="font-mono text-[0.625rem] font-normal text-muted-foreground">
                     默认读 .env
                   </span>
                 </DropdownMenuLabel>
 
-                {/* 唯一模型：仓库根 .env 的 NOVA_LLM_MODEL（可被弹窗配置覆盖） */}
-                <DropdownMenuItem
-                  className="font-mono text-xs"
-                  onClick={() => setModelMenu(false)}
-                >
-                  <span className="min-w-0 truncate">{model}</span>
-                  <CircleCheck className="ml-auto size-3.5 shrink-0 text-nova-accent" />
-                </DropdownMenuItem>
+                {/* 连接档案列表：点击切换激活 */}
+                {profiles.map((profile) => (
+                  <DropdownMenuItem
+                    key={profile.id}
+                    className="text-xs"
+                    onClick={() => onSelectProfile(profile.id)}
+                  >
+                    <span className="min-w-0 truncate">{profile.name}</span>
+                    <span className="ml-auto min-w-0 truncate font-mono text-[0.625rem] text-muted-foreground">
+                      {profile.model}
+                    </span>
+                    {activeProfileId === profile.id && (
+                      <CircleCheck className="size-3.5 shrink-0 text-nova-accent" />
+                    )}
+                  </DropdownMenuItem>
+                ))}
 
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -1231,7 +1409,7 @@ function DraftComposer({
                 >
                   模型配置…
                   <span className="ml-auto text-[0.625rem] text-muted-foreground">
-                    端点 / 密钥
+                    管理 / 新增
                   </span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -1260,7 +1438,7 @@ function DraftComposer({
                     size="icon"
                     aria-label="中止执行"
                     onClick={onStop}
-                    className="size-9 shrink-0 rounded-lg border-nova-rose/40 text-nova-rose transition-all hover:bg-nova-rose/12 hover:text-nova-rose active:scale-95"
+                    className="size-7 shrink-0 rounded-lg border-nova-rose/40 text-nova-rose transition-all hover:bg-nova-rose/12 hover:text-nova-rose active:scale-95"
                   >
                     <Square />
                   </Button>
@@ -1275,7 +1453,7 @@ function DraftComposer({
                     aria-label="发起验证"
                     onClick={onSubmit}
                     disabled={!hasAgent || draft.trim().length === 0}
-                    className="size-9 shrink-0 rounded-lg border border-nova-accent/40 bg-nova-accent/15 text-nova-accent transition-all hover:bg-nova-accent/25 hover:shadow-[0_0_18px_color-mix(in_oklab,var(--nova-accent)_35%,transparent)] active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+                    className="size-7 shrink-0 rounded-lg border border-nova-accent/40 bg-nova-accent/15 text-nova-accent transition-all hover:bg-nova-accent/25 hover:shadow-[0_0_18px_color-mix(in_oklab,var(--nova-accent)_35%,transparent)] active:scale-95 disabled:pointer-events-none disabled:opacity-40"
                   >
                     <ArrowUp />
                   </Button>
