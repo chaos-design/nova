@@ -492,7 +492,7 @@ function VerificationConfig({
   return (
     <Card>
       <CardHeaderBlock title="验证配置" hint="勾选多个目标即并行对照验证" />
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-3 py-4">
         <div className="space-y-2">
           <Label>目标 Agent</Label>
           {/* 等宽行 + max-h 封顶：档案多时区域内滚动，少时以内容为准 */}
@@ -906,7 +906,7 @@ function VerificationCases({
         title="验证用例"
         hint="点击即发送，看 Agent 的真实反应"
       />
-      <CardContent className="space-y-2">
+      <CardContent className="space-y-2 py-4">
         <CaseItem
           title="交叉验证调研"
           target="工具调用规范"
@@ -1168,7 +1168,7 @@ const VerificationCard = memo(function VerificationCard({
         turn.status === "failed" && "border-nova-rose/30",
       )}
     >
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-3 py-4">
         {/* 头部：轮次 + 状态判定 */}
         <div className="flex flex-wrap items-center gap-2">
           <p className="nova-mono-label mr-auto text-nova-starlight">
