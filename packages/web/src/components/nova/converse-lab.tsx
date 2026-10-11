@@ -189,7 +189,7 @@ export function ConverseLab({
 
   return (
     // 高度扣掉顶栏、页头与页脚：内容区撑满剩余视口，内部各自滚动
-    <div className="grid items-start gap-4 xl:h-[calc(100dvh-16rem)] xl:min-h-[36rem] xl:grid-cols-[19rem_minmax(0,1fr)]">
+    <div className="grid items-start gap-4 xl:h-[calc(100dvh-13.5rem)] xl:min-h-[36rem] xl:grid-cols-[19rem_minmax(0,1fr)]">
       {/* 旁置模块：配置 / 用例 / 口径 */}
       <aside className="space-y-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1">
         <VerificationConfig
