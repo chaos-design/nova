@@ -260,35 +260,3 @@ export interface ConverseOverrides {
   model?: string;
   apiKey?: string;
 }
-
-/**
- * 校验 LLM 端点 URL：协议白名单 + 长度钳制。
- *
- * 端点会由服务端代为发起请求（对话补全、模型列表），是潜在的 SSRF 面，
- * 因此入口统一走这里：只放行显式 http/https，长度钳到远超实际用量的上限。
- */
-export function validateLlmEndpoint(
-  raw: unknown,
-): { ok: true; url: string } | { ok: false; message: string; hint?: string } {
-  if (typeof raw !== "string" || raw.trim().length === 0) {
-    return { ok: false, message: "端点不能为空" };
-  }
-  const endpoint = raw.trim().slice(0, 300);
-  try {
-    const parsed = new URL(endpoint);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return {
-        ok: false,
-        message: "端点只允许 http/https 协议",
-        hint: "端点形如 https://api.example.com/v1。",
-      };
-    }
-    return { ok: true, url: endpoint };
-  } catch {
-    return {
-      ok: false,
-      message: "端点不是合法 URL",
-      hint: "端点形如 https://api.example.com/v1（带 /v1，无末尾斜杠）。",
-    };
-  }
-}

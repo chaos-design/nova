@@ -14,12 +14,20 @@ import {
   ShieldAlert,
   Square,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LogStream } from "@/components/nova/log-stream";
 import { MarkdownText } from "@/components/nova/markdown-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -183,10 +191,6 @@ export function ConverseLab({
     }
   };
 
-  // 模型下拉与配置编辑器共享的生效值
-  const agentEntry = localAgents.find((item) => item.id === agentId);
-  const effectiveEndpoint = overrides.endpoint ?? agentEntry?.endpoint ?? "";
-
   return (
     // 高度扣掉顶栏、页头与页脚：内容区撑满剩余视口，内部各自滚动
     <div className="grid items-start gap-4 xl:h-[calc(100dvh-13.5rem)] xl:min-h-[36rem] xl:grid-cols-[19rem_minmax(0,1fr)]">
@@ -248,12 +252,7 @@ export function ConverseLab({
             sending={converse.sending}
             onStop={converse.stop}
             hasAgent={agent !== null}
-            endpoint={effectiveEndpoint}
-            apiKey={overrides.apiKey ?? ""}
             model={agent?.model ?? ""}
-            onModelSelect={(id) =>
-              handleOverridesChange({ ...overrides, model: id })
-            }
             onOpenConfig={() => setEditorOpen(true)}
             onQuickCase={quickSend}
           />
@@ -356,11 +355,11 @@ function VerificationConfig({
 }
 
 /**
- * 端点 / 模型 / 密钥的可视化编辑。
+ * 模型配置：编辑态是弹窗（Dialog），展示态留在侧栏。
  *
- * 展示态读「覆盖值 ?? 登记默认」；编辑态只允许改覆盖值，
- * 保存进 localStorage 并在后续每轮请求里随 body 下发。
- * 打开方式有二：本模块的「编辑配置」按钮、模型下拉里的「模型配置…」。
+ * 展示态读「覆盖值 ?? 登记默认」；弹窗里只改覆盖值，保存进
+ * localStorage 并在后续每轮请求里随 body 下发。打开方式有二：
+ * 本模块的「编辑配置」按钮、模型下拉里的「模型配置…」。
  */
 function ConfigEditor({
   entry,
@@ -399,64 +398,6 @@ function ConfigEditor({
     });
     onOpenChange(false);
   };
-
-  if (open) {
-    return (
-      <div className="space-y-2.5 rounded-lg border border-nova-accent/25 bg-nova-accent/4 p-3">
-        <div className="space-y-1">
-          <Label htmlFor="cfg-endpoint" className="text-[0.6875rem]">
-            端点（OpenAI 兼容，含 /v1）
-          </Label>
-          <Input
-            id="cfg-endpoint"
-            value={endpoint}
-            onChange={(event) => setEndpoint(event.target.value)}
-            placeholder="https://api.example.com/v1"
-            className="h-8 font-mono text-xs"
-          />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="cfg-model" className="text-[0.6875rem]">
-            模型标识
-          </Label>
-          <Input
-            id="cfg-model"
-            value={model}
-            onChange={(event) => setModel(event.target.value)}
-            placeholder="gpt-4o-mini / claude-…"
-            className="h-8 font-mono text-xs"
-          />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="cfg-api-key" className="text-[0.6875rem]">
-            密钥（留空则沿用 .env 的 {entry.apiKeyEnv}）
-          </Label>
-          <Input
-            id="cfg-api-key"
-            type="password"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder="sk-…"
-            className="h-8 font-mono text-xs"
-            autoComplete="off"
-          />
-        </div>
-        <div className="flex gap-2">
-          <Button size="sm" className="h-7 flex-1 text-xs" onClick={save}>
-            保存
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 flex-1 text-xs"
-            onClick={() => onOpenChange(false)}
-          >
-            取消
-          </Button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-2">
@@ -504,6 +445,74 @@ function ConfigEditor({
           value={overrides.apiKey ? "已保存于浏览器" : `env:${entry.apiKeyEnv}`}
         />
       </dl>
+
+      {/* 编辑态：弹窗 */}
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base">模型配置</DialogTitle>
+            <DialogDescription className="text-xs leading-relaxed">
+              默认读取仓库根 .env（NOVA_LLM_*）；自定义保存在浏览器
+              localStorage，密钥只随请求透传、服务端不落任何存储。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="cfg-endpoint" className="text-xs">
+                端点（OpenAI 兼容，含 /v1）
+              </Label>
+              <Input
+                id="cfg-endpoint"
+                value={endpoint}
+                onChange={(event) => setEndpoint(event.target.value)}
+                placeholder="https://api.example.com/v1"
+                className="h-8 font-mono text-xs"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="cfg-model" className="text-xs">
+                模型标识
+              </Label>
+              <Input
+                id="cfg-model"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+                placeholder="agnes-3.0-flash / gpt-4o-mini / …"
+                className="h-8 font-mono text-xs"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="cfg-api-key" className="text-xs">
+                密钥（留空则沿用 .env 的 {entry.apiKeyEnv}）
+              </Label>
+              <Input
+                id="cfg-api-key"
+                type="password"
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                placeholder="sk-…"
+                className="h-8 font-mono text-xs"
+                autoComplete="off"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs"
+              onClick={() => onOpenChange(false)}
+            >
+              取消
+            </Button>
+            <Button size="sm" className="text-xs" onClick={save}>
+              保存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1076,10 +1085,7 @@ function DraftComposer({
   sending,
   onStop,
   hasAgent,
-  endpoint,
-  apiKey,
   model,
-  onModelSelect,
   onOpenConfig,
   onQuickCase,
 }: {
@@ -1089,52 +1095,14 @@ function DraftComposer({
   sending: boolean;
   onStop: () => void;
   hasAgent: boolean;
-  /** 当前生效端点（覆盖值 ?? 登记默认），用于拉取模型列表 */
-  endpoint: string;
-  /** 当前生效密钥（仅界面覆盖值），用于拉取模型列表 */
-  apiKey: string;
-  /** 当前生效模型标识 */
+  /** 当前生效模型标识（默认读 .env，可被弹窗配置覆盖） */
   model: string;
-  /** 从下拉里选中模型：写入可视化配置 */
-  onModelSelect: (model: string) => void;
-  /** 打开左侧「连接配置」编辑器 */
+  /** 打开模型配置弹窗 */
   onOpenConfig: () => void;
   /** 快捷发起一条验证用例（+ 菜单） */
   onQuickCase: (text: string) => void;
 }) {
   const [modelMenu, setModelMenu] = useState(false);
-  const [models, setModels] = useState<string[] | null>(null);
-  const [modelsError, setModelsError] = useState<string | null>(null);
-  const [loadingModels, setLoadingModels] = useState(false);
-
-  // hover 打开时才拉取：端点/密钥可能刚被用户改过，每次打开都重新取
-  const fetchModels = useCallback(async () => {
-    setLoadingModels(true);
-    setModelsError(null);
-    try {
-      const response = await fetch("/api/agents/models", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ endpoint, apiKey }),
-      });
-      const body = (await response.json()) as {
-        models?: string[];
-        message?: string;
-        hint?: string;
-      };
-      if (!response.ok) {
-        throw new Error(body.message ?? `请求失败（${response.status}）`);
-      }
-      setModels(body.models ?? []);
-    } catch (error) {
-      setModels(null);
-      setModelsError(
-        error instanceof Error ? error.message : "模型列表获取失败",
-      );
-    } finally {
-      setLoadingModels(false);
-    }
-  }, [endpoint, apiKey]);
 
   return (
     <Card>
@@ -1216,13 +1184,7 @@ function DraftComposer({
               />
             )}
 
-            <DropdownMenu
-              open={modelMenu}
-              onOpenChange={(open) => {
-                setModelMenu(open);
-                if (open) void fetchModels();
-              }}
-            >
+            <DropdownMenu open={modelMenu} onOpenChange={setModelMenu}>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
@@ -1232,7 +1194,6 @@ function DraftComposer({
                   onMouseEnter={() => {
                     if (!hasAgent || sending) return;
                     setModelMenu(true);
-                    void fetchModels();
                   }}
                   className="size-7 text-muted-foreground hover:text-foreground"
                 >
@@ -1247,46 +1208,18 @@ function DraftComposer({
                 <DropdownMenuLabel className="flex items-center justify-between text-xs">
                   模型
                   <span className="font-mono text-[0.625rem] font-normal text-muted-foreground">
-                    {model}
+                    默认读 .env
                   </span>
                 </DropdownMenuLabel>
 
-                {loadingModels && (
-                  <div className="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
-                    <LoaderCircle className="size-3.5 animate-spin" />
-                    正在获取模型列表…
-                  </div>
-                )}
-
-                {!loadingModels && modelsError && (
-                  <div className="px-2 py-2 text-xs leading-relaxed text-nova-rose">
-                    {modelsError}
-                  </div>
-                )}
-
-                {!loadingModels &&
-                  !modelsError &&
-                  (models?.length ?? 0) === 0 && (
-                    <div className="px-2 py-2 text-xs text-muted-foreground">
-                      端点未返回模型
-                    </div>
-                  )}
-
-                {models?.map((id) => (
-                  <DropdownMenuItem
-                    key={id}
-                    className="font-mono text-xs"
-                    onClick={() => {
-                      onModelSelect(id);
-                      setModelMenu(false);
-                    }}
-                  >
-                    <span className="min-w-0 truncate">{id}</span>
-                    {id === model && (
-                      <CircleCheck className="ml-auto size-3.5 shrink-0 text-nova-accent" />
-                    )}
-                  </DropdownMenuItem>
-                ))}
+                {/* 唯一模型：仓库根 .env 的 NOVA_LLM_MODEL（可被弹窗配置覆盖） */}
+                <DropdownMenuItem
+                  className="font-mono text-xs"
+                  onClick={() => setModelMenu(false)}
+                >
+                  <span className="min-w-0 truncate">{model}</span>
+                  <CircleCheck className="ml-auto size-3.5 shrink-0 text-nova-accent" />
+                </DropdownMenuItem>
 
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
