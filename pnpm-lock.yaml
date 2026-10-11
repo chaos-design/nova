@@ -114,7 +114,33 @@ importers:
         specifier: ^3.2.7
         version: 3.2.7(@types/debug@4.1.13)(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.32.0)
 
+  playground/nova-coder:
+    dependencies:
+      '@chaos-design/config':
+        specifier: workspace:*
+        version: link:../../packages/nova-config
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^3.2.7
+        version: 3.2.7(vitest@3.2.7(@types/debug@4.1.13)(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.32.0))
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.32.0)
+
   playground/nova-local:
+    dependencies:
+      '@chaos-design/config':
+        specifier: workspace:*
+        version: link:../../packages/nova-config
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^3.2.7
+        version: 3.2.7(vitest@3.2.7(@types/debug@4.1.13)(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.32.0))
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.32.0)
+
+  playground/nova-research:
     dependencies:
       '@chaos-design/config':
         specifier: workspace:*

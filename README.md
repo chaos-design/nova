@@ -180,6 +180,7 @@ NOVA_AGENT_PORT=43112 pnpm run agent:local
 | `pnpm run config:check` | 校验 config.yaml 与环境变量是否自洽 | `pnpm install` |
 | `pnpm run dev` | 启动控制台（读配置端口，Turbopack 热重载） | 配置自检通过 |
 | `pnpm run dev:agent` | 启动 `playground/nova-local` 本地 Agent | 配置自检通过 |
+| `pnpm run dev:research` / `dev:coder` | 启动领域专家 Agent（调研专员 / 工程搭档） | 配置自检通过 |
 | `pnpm run dev:all` | 一条命令同时拉起上面两个 | 同上 |
 | `pnpm run lint` / `lint:fix` / `format` | Biome 规范检查与格式化 | — |
 | `pnpm run typecheck` | TypeScript 类型检查 | — |
@@ -302,9 +303,15 @@ nova/
 │       ├── src/{config.mjs,config.d.mts}   # getConfig / loadConfig / projectRoot
 │       └── tests/config.test.ts
 ├── playground/
-│   └── nova-local/              # @chaos-design/nova-local · 零依赖本地 Agent
-│       ├── index.mjs / policy.mjs / agent.config.yaml
-│       └── tests/{policy,agent-entry}.test.ts
+│   ├── nova-local/              # @chaos-design/nova-local · 零依赖本地 Agent（规则执行体）
+│   │   ├── index.mjs / policy.mjs / agent.config.yaml
+│   │   └── tests/{policy,agent-entry}.test.ts
+│   ├── nova-research/           # @chaos-design/nova-research · 调研专员（真实大模型人格代理）
+│   │   ├── index.mjs / persona.mjs / agent.config.yaml
+│   │   └── tests/persona.test.ts
+│   └── nova-coder/              # @chaos-design/nova-coder · 工程搭档（意图分发对照）
+│       ├── index.mjs / persona.mjs / agent.config.yaml
+│       └── tests/persona.test.ts
 ├── scripts/                     # 跨 workspace 的根级脚本
 │   ├── dev-all.mjs              #   同时拉起控制台与 Agent
 │   ├── check-config.mjs         #   配置自检（config.yaml ↔ .env.example）
@@ -338,7 +345,13 @@ Agent 侧不依赖 web；`projectRoot()` 从进程 cwd 向上找 `pnpm-workspace
 
 ```bash
 pnpm run agent:local    # http://127.0.0.1:43110/v1（模型 nova-local-agent）
+pnpm run agent:research # http://127.0.0.1:43111/v1（调研专员 nova-research-agent）
+pnpm run agent:coder    # http://127.0.0.1:43112/v1（工程搭档 nova-coder-agent）
 ```
+
+两个领域专家 Agent 的回复来自 `.env` 指向的真实大模型（人格代理），
+已登记进控制台，用于 Converse Lab 的**意图分发**验证；`nova-local` 是
+规则执行体，只用于离线 e2e 与开发者自测，不进控制台。
 
 **换成真实后端的路径**：替换 `run-store.ts` 内部的读写实现（换成数据库或
 远端 API），对外的函数签名不变，`packages/web/src/lib/nova` 之上的页面与组件都不需要改动。

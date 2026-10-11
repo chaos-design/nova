@@ -217,7 +217,9 @@ pnpm run agent:local
 # NOVA 本地 Agent 已启动：http://127.0.0.1:43110/v1（模型 nova-local-agent）
 ```
 
-已登记为 `agt-local-nova`（NOVA-LOCAL · 本地执行体）。它不是按脚本回放的桩：
+它**不登记进控制台**：登记表只收回复来自真实大模型的端点
+（见 `local-agents.ts` 头注），nova-local 用于离线 e2e 与开发者自测。
+它不是按脚本回放的桩：
 
 - **无状态、可重放**：不保存会话，每轮都从 NOVA 回传的完整 `messages`
   里重建状态；
@@ -244,6 +246,28 @@ pnpm run agent:local
 
 照第 2 节的两个路由写即可，端口不要撞 43110。写完后在第 3 节的位置追加
 一条登记，`model` 必须与 `/v1/models` 里的 id 一致。
+
+### 6.2 领域专家 Agent：NOVA-RESEARCH 与 NOVA-CODER
+
+`playground/nova-research`（调研专员 · 端口 43111）与
+`playground/nova-coder`（工程搭档 · 端口 43112）是两个**真实大模型
+人格代理**：收到请求后把领域人格插到对话最前，转发给 `agent.llm`
+指向的真实端点（`.env` 的 `NOVA_LLM_*`），响应再以请求的模型 id 整形回去。
+因为回复出自真实模型，它们可以登记进控制台：
+
+```bash
+pnpm run agent:research   # http://127.0.0.1:43111/v1（模型 nova-research-agent）
+pnpm run agent:coder      # http://127.0.0.1:43112/v1（模型 nova-coder-agent）
+```
+
+- 已登记为 `agt-local-research` / `agt-local-coder`；
+- 两者职责互斥（调研 ↔ 工程），是 Converse Lab **意图分发**的验证对象：
+  选定两个专家、执行方式切「意图分发」后，调研类消息应路由给
+  NOVA-RESEARCH，工程类消息应路由给 NOVA-CODER；
+- 工具原样透传：`external_search` / `summarize` 由 NOVA 执行器真实代执行，
+  人格层不改写任何工具语义；
+- 上游端点与密钥沿用根配置 `agent.llm`（`.env` 的 `NOVA_LLM_*`），
+  本地服务自身无鉴权、不持密钥。
 
 ## 7. 指向真实模型服务（Ollama / vLLM / LM Studio）
 

@@ -91,6 +91,38 @@ export const LOCAL_AGENTS: readonly LocalAgentEntry[] = [
     tagline: "同端点的 2.5 系模型：与 AGNES-FLASH 并行对话验证做横向对照",
     registeredAt: "2026-10-11T00:00:00.000Z",
   },
+  {
+    // 领域专家 Agent（playground/nova-research）：本地人格代理服务，
+    // 转发到 agent.llm 指向的真实大模型并注入调研人格，回复必出自真实模型。
+    // 与下面的工程搭档职责互斥，意图分发才有可判定的分界。
+    id: "agt-local-research",
+    name: "NOVA-RESEARCH",
+    codename: "深度调研员",
+    model: "nova-research-agent",
+    owner: "本地开发",
+    version: "v0.1.0",
+    endpoint: "http://127.0.0.1:43111/v1",
+    // 本地端点无鉴权：变量名仅满足登记结构，执行器读不到值就不带 Authorization
+    apiKeyEnv: "LLM_API_KEY",
+    tagline:
+      "专职调研的领域 Agent：多侧面检索、交叉验证与数据缺口分析（playground/nova-research）",
+    registeredAt: "2026-10-11T00:00:00.000Z",
+  },
+  {
+    // 调研专员的配套对照：工程实现取向，用于验证意图分发是否路由正确
+    // （工程类消息应路由到这里，调研类消息应路由给 NOVA-RESEARCH）。
+    id: "agt-local-coder",
+    name: "NOVA-CODER",
+    codename: "工程搭档",
+    model: "nova-coder-agent",
+    owner: "本地开发",
+    version: "v0.1.0",
+    endpoint: "http://127.0.0.1:43112/v1",
+    apiKeyEnv: "LLM_API_KEY",
+    tagline:
+      "专职工程实现的领域 Agent：编码、调试与脚本验证，与调研员构成意图分发对照（playground/nova-coder）",
+    registeredAt: "2026-10-11T00:00:00.000Z",
+  },
 ];
 
 /** 按 id 查本地 Agent，找不到返回 undefined（不抛错：登记是可选注入） */
