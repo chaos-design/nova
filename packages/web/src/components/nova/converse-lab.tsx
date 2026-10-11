@@ -428,7 +428,8 @@ function VerificationConfig({
       <CardContent className="space-y-3">
         <div className="space-y-2">
           <Label>目标 Agent</Label>
-          <div className="flex flex-wrap gap-1.5">
+          {/* 等宽行 + max-h 封顶：档案多时区域内滚动，少时以内容为准 */}
+          <div className="max-h-40 space-y-1.5 overflow-y-auto">
             {options.map((item) => {
               const active = targetIds.includes(item.id);
               return (
@@ -438,17 +439,27 @@ function VerificationConfig({
                   aria-pressed={active}
                   onClick={() => onToggleAgent(item.id)}
                   className={cn(
-                    "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors",
+                    "flex w-full items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-left text-xs transition-colors",
                     active
                       ? "border-nova-accent/40 bg-nova-accent/12 text-nova-accent"
                       : "border-white/10 bg-white/2 text-muted-foreground hover:border-white/20 hover:text-foreground",
                   )}
                 >
-                  {active && (
-                    <CircleCheck aria-hidden="true" className="size-3" />
+                  {active ? (
+                    <CircleCheck
+                      aria-hidden="true"
+                      className="size-3 shrink-0"
+                    />
+                  ) : (
+                    <span
+                      aria-hidden="true"
+                      className="size-3 shrink-0 rounded-full border border-current opacity-40"
+                    />
                   )}
-                  <span className="font-medium">{item.name}</span>
-                  <span className="font-mono text-[0.625rem] opacity-70">
+                  <span className="min-w-0 truncate font-medium">
+                    {item.name}
+                  </span>
+                  <span className="ml-auto min-w-0 truncate font-mono text-[0.625rem] opacity-70">
                     {item.model}
                   </span>
                 </button>
