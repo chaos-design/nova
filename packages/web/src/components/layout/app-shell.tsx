@@ -58,19 +58,6 @@ export function AppShell({
         <main className="mx-auto w-full max-w-[100rem] flex-1 px-4 py-6 lg:px-8 lg:py-8">
           {children}
         </main>
-        <footer className="border-t border-white/8 px-4 py-4 lg:px-8">
-          <p className="text-xs text-muted-foreground/70">
-            NOVA 控制台 · 所有指标来自本地真实运行记录，由{" "}
-            <code className="mx-1 font-mono text-nova-accent/80">
-              src/lib/nova/run-store.ts
-            </code>{" "}
-            落库于{" "}
-            <code className="mx-1 font-mono text-nova-accent/80">
-              .nova/runs.json
-            </code>
-            ，不含预置演示数据。
-          </p>
-        </footer>
       </div>
 
       <GlobalSearch

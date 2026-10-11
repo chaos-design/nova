@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { PageHeader } from "@/components/layout/page-header";
-import { ConverseLab } from "@/components/nova/converse-lab";
+import { ConverseLab, ConverseScopeHint } from "@/components/nova/converse-lab";
 import { LOCAL_AGENTS, localAgentProfile } from "@/lib/nova";
 
 export const metadata: Metadata = {
@@ -22,10 +22,12 @@ export default function ConversePage() {
   const agents = LOCAL_AGENTS.map(localAgentProfile);
 
   return (
-    <div className="space-y-6">
+    // 负下边距抵消外壳 main 的 pb-8：输入卡贴住视口底，同时页面不出滚动条
+    <div className="-mb-8 space-y-6">
       <PageHeader
         eyebrow="Converse Lab"
         title="对话验证"
+        actions={<ConverseScopeHint />}
         subtitle="从左侧验证用例发起或自定义输入，每轮生成一张验证卡：Agent 回复、工具调用、注入判定与 token 成本全部来自服务端真实执行，读不到就如实显示「尚未执行」，没有 mock 回复。"
       />
 
