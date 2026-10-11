@@ -28,8 +28,7 @@ export async function POST(request: Request) {
   }
 
   // 界面没存密钥时兜底读 .env：浏览器侧拿不到也不该拿到 env 值
-  const apiKey =
-    payload.apiKey?.trim() || getConfig().agent.llm.apiKey || "";
+  const apiKey = payload.apiKey?.trim() || getConfig().agent.llm.apiKey || "";
 
   let response: Response;
   try {
