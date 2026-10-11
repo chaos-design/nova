@@ -244,4 +244,19 @@ export interface ConverseRequest {
   history: ConverseChatMessage[];
   /** 本轮用户消息 */
   userMessage: string;
+  /**
+   * 端点 / 模型 / 密钥的可视化覆盖（客户端 localStorage 里保存的配置）。
+   *
+   * 这是**有意的信任边界放宽**：本控制台是自托管本地工具，允许用户在
+   * 界面上指向自己的端点。服务端仍会逐项校验（URL 协议、长度上限），
+   * 且密钥只在本次请求内使用，服务端不落任何存储。
+   */
+  overrides?: ConverseOverrides;
+}
+
+/** 界面可视化配置的覆盖值；字段缺省表示沿用登记条目 / env 默认 */
+export interface ConverseOverrides {
+  endpoint?: string;
+  model?: string;
+  apiKey?: string;
 }

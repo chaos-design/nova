@@ -17,6 +17,7 @@ import { MarkdownText } from "@/components/nova/markdown-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -36,9 +37,51 @@ import {
 import { type ConverseTurn, useConverse } from "@/hooks/use-converse";
 import {
   type AgentProfile,
+  type ConverseOverrides,
   type LocalAgentEntry,
   localAgentProfile,
 } from "@/lib/nova";
+
+/** 可视化配置在浏览器 localStorage 里的键；仅存于本机浏览器 */
+const OVERRIDES_STORAGE_KEY = "nova:converse:agent-overrides";
+
+/** 从 localStorage 读可视化配置；损坏或缺失一律回退为空（沿用 env 默认） */
+function loadStoredOverrides(): ConverseOverrides {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(OVERRIDES_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const pick = (value: unknown) =>
+      typeof value === "string" && value.trim() ? value.trim() : undefined;
+    return {
+      endpoint: pick(parsed.endpoint),
+      model: pick(parsed.model),
+      apiKey: pick(parsed.apiKey),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function storeOverrides(overrides: ConverseOverrides): void {
+  try {
+    window.localStorage.setItem(
+      OVERRIDES_STORAGE_KEY,
+      JSON.stringify(overrides),
+    );
+  } catch {
+    // 隐私模式 / 配额满：配置只在本次会话生效，不影响验证流程
+  }
+}
+
+function clearStoredOverrides(): void {
+  try {
+    window.localStorage.removeItem(OVERRIDES_STORAGE_KEY);
+  } catch {
+    // 同上：读取失败也只影响下一次打开
+  }
+}
 
 /**
  * 对话验证台（Converse Lab）——验证优先的布局。
@@ -98,13 +141,33 @@ export function ConverseLab({
   }, [converse.turns.length, lastLogCount, lastTurn?.status]);
 
   const quickSend = (text: string) => {
-    if (agent && !converse.sending) void converse.send(agent.id, text);
+    if (agent && !converse.sending)
+      void converse.send(agent.id, text, overrides);
   };
 
   const submitDraft = () => {
     if (!agent || converse.sending || draft.trim().length === 0) return;
     quickSend(draft);
     setDraft("");
+  };
+
+  // 可视化配置：首帧与 SSR 一致（空覆盖 = 沿用 env 默认），挂载后再读 localStorage，
+  // 避免 hydration 不一致
+  const [overrides, setOverridesState] = useState<ConverseOverrides>({});
+  useEffect(() => {
+    setOverridesState(loadStoredOverrides());
+  }, []);
+
+  const handleOverridesChange = (next: ConverseOverrides) => {
+    const cleaned = Object.fromEntries(
+      Object.entries(next).filter(([, value]) => value),
+    ) as ConverseOverrides;
+    setOverridesState(cleaned);
+    if (Object.keys(cleaned).length === 0) {
+      clearStoredOverrides();
+    } else {
+      storeOverrides(cleaned);
+    }
   };
 
   return (
@@ -118,6 +181,8 @@ export function ConverseLab({
           agentId={agentId}
           onAgentChange={setAgentId}
           sending={converse.sending}
+          overrides={overrides}
+          onOverridesChange={handleOverridesChange}
         />
         <VerificationCases
           completed={totals.completedTurns}
@@ -181,14 +246,21 @@ function VerificationConfig({
   agentId,
   onAgentChange,
   sending,
+  overrides,
+  onOverridesChange,
 }: {
   localAgents: readonly LocalAgentEntry[];
   agents: readonly AgentProfile[];
   agentId: string;
   onAgentChange: (id: string) => void;
   sending: boolean;
+  overrides: ConverseOverrides;
+  onOverridesChange: (overrides: ConverseOverrides) => void;
 }) {
   const entry = localAgents.find((item) => item.id === agentId);
+  const customized = Boolean(
+    overrides.endpoint || overrides.model || overrides.apiKey,
+  );
 
   return (
     <Card>
@@ -216,17 +288,14 @@ function VerificationConfig({
           </Select>
         </div>
 
-        {entry ? (
-          <dl className="space-y-1.5 rounded-lg border border-white/8 bg-white/2 px-3 py-2.5 font-mono text-[0.6875rem] leading-relaxed">
-            <ConfigRow label="端点" value={entry.endpoint} />
-            <ConfigRow label="模型" value={entry.model} />
-            <ConfigRow label="密钥" value={`env:${entry.apiKeyEnv}`} />
-          </dl>
-        ) : (
-          <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
-            还没有可验证的 Agent。先在 local-agents.ts 登记一条，或跑起仓库
-            自带的执行体。
-          </p>
+        {entry && (
+          <ConfigEditor
+            entry={entry}
+            overrides={overrides}
+            customized={customized}
+            disabled={sending}
+            onOverridesChange={onOverridesChange}
+          />
         )}
 
         <Separator />
@@ -249,11 +318,147 @@ function VerificationConfig({
             <span aria-hidden="true" className="text-nova-cyan">
               ·
             </span>
-            密钥只存环境变量名，永不进入档案与界面。
+            端点/模型默认读仓库根 .env；界面自定义保存在浏览器 localStorage，
+            密钥值只随请求透传、服务端不落任何存储。
           </li>
         </ul>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * 端点 / 模型 / 密钥的可视化编辑。
+ *
+ * 展示态读「覆盖值 ?? 登记默认」；编辑态只允许改覆盖值，
+ * 保存进 localStorage 并在后续每轮请求里随 body 下发。
+ */
+function ConfigEditor({
+  entry,
+  overrides,
+  customized,
+  disabled,
+  onOverridesChange,
+}: {
+  entry: LocalAgentEntry;
+  overrides: ConverseOverrides;
+  customized: boolean;
+  disabled: boolean;
+  onOverridesChange: (overrides: ConverseOverrides) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [endpoint, setEndpoint] = useState("");
+  const [model, setModel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+
+  const openEditor = () => {
+    setEndpoint(overrides.endpoint ?? entry.endpoint);
+    setModel(overrides.model ?? entry.model);
+    setApiKey(overrides.apiKey ?? "");
+    setEditing(true);
+  };
+
+  const save = () => {
+    onOverridesChange({
+      endpoint: endpoint.trim() || undefined,
+      model: model.trim() || undefined,
+      apiKey: apiKey.trim() || undefined,
+    });
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="space-y-2.5 rounded-lg border border-nova-accent/25 bg-nova-accent/4 p-3">
+        <div className="space-y-1">
+          <Label htmlFor="cfg-endpoint" className="text-[0.6875rem]">
+            端点（OpenAI 兼容，含 /v1）
+          </Label>
+          <Input
+            id="cfg-endpoint"
+            value={endpoint}
+            onChange={(event) => setEndpoint(event.target.value)}
+            placeholder="https://api.example.com/v1"
+            className="h-8 font-mono text-xs"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="cfg-model" className="text-[0.6875rem]">
+            模型标识
+          </Label>
+          <Input
+            id="cfg-model"
+            value={model}
+            onChange={(event) => setModel(event.target.value)}
+            placeholder="gpt-4o-mini / claude-…"
+            className="h-8 font-mono text-xs"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="cfg-api-key" className="text-[0.6875rem]">
+            密钥（留空则沿用 .env 的 {entry.apiKeyEnv}）
+          </Label>
+          <Input
+            id="cfg-api-key"
+            type="password"
+            value={apiKey}
+            onChange={(event) => setApiKey(event.target.value)}
+            placeholder="sk-…"
+            className="h-8 font-mono text-xs"
+            autoComplete="off"
+          />
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" className="h-7 flex-1 text-xs" onClick={save}>
+            保存
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 flex-1 text-xs"
+            onClick={() => setEditing(false)}
+          >
+            取消
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <p className="nova-mono-label mr-auto text-[0.625rem] text-muted-foreground">
+          连接配置
+        </p>
+        {customized && (
+          <Badge
+            variant="outline"
+            className="border-nova-accent/40 text-[0.5625rem] text-nova-accent"
+          >
+            已自定义 · localStorage
+          </Badge>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-2 text-[0.6875rem] text-muted-foreground"
+          disabled={disabled}
+          onClick={customized ? () => onOverridesChange({}) : openEditor}
+        >
+          {customized ? "恢复 .env 默认" : "编辑配置"}
+        </Button>
+      </div>
+
+      <dl className="space-y-1.5 rounded-lg border border-white/8 bg-white/2 px-3 py-2.5 font-mono text-[0.6875rem] leading-relaxed">
+        <ConfigRow label="端点" value={overrides.endpoint ?? entry.endpoint} />
+        <ConfigRow label="模型" value={overrides.model ?? entry.model} />
+        <ConfigRow
+          label="密钥"
+          value={overrides.apiKey ? "已保存于浏览器" : `env:${entry.apiKeyEnv}`}
+        />
+      </dl>
+    </div>
   );
 }
 

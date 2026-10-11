@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type ConverseChatMessage,
   type ConverseEvent,
+  type ConverseOverrides,
   type ConverseStep,
   type ConverseTurnResult,
   readSseStream,
@@ -135,9 +136,9 @@ export function useConverse() {
     [patchTurn],
   );
 
-  /** 发送一条用户消息：乐观落台 + 服务端流式驱动回复 */
+  /** 发送一条用户消息：乐观落台 + 服务端流式驱动回复；overrides 为可视化配置覆盖 */
   const send = useCallback(
-    async (agentId: string, text: string) => {
+    async (agentId: string, text: string, overrides?: ConverseOverrides) => {
       const userMessage = text.trim();
       // 上一轮还在跑时不叠发：SSE 流是单条的，叠发只会互相取消
       if (!userMessage || abortRef.current !== null) return;
@@ -166,7 +167,12 @@ export function useConverse() {
         const response = await fetch("/api/agents/converse", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ agentId, history, userMessage }),
+          body: JSON.stringify({
+            agentId,
+            history,
+            userMessage,
+            overrides,
+          }),
           signal: controller.signal,
         });
 

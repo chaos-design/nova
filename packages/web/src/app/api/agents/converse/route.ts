@@ -3,9 +3,14 @@ import type {
   AgentProfile,
   ConverseChatMessage,
   ConverseEvent,
+  ConverseOverrides,
   ConverseRequest,
 } from "@/lib/nova";
-import { localAgentById, localAgentProfile } from "@/lib/nova";
+import {
+  localAgentById,
+  localAgentProfile,
+  normalizeEndpoint,
+} from "@/lib/nova";
 import { runConverseTurn } from "@/lib/nova/executors/converse";
 import { lintSystemPrompt } from "@/lib/nova/executors/live";
 
@@ -60,7 +65,8 @@ export async function POST(request: Request) {
     return jsonError(validated.error, validated.hint, 400);
   }
 
-  // Agent 档案由服务端按 id 反查：绝不采信客户端传来的档案内容
+  // Agent 档案由服务端按 id 反查；端点/模型/密钥可被可视化配置覆盖，
+  // 覆盖值逐项校验后仅在本次请求内生效（服务端不落任何存储）
   const localEntry = localAgentById(payload.agentId);
 
   if (!localEntry) {
@@ -73,15 +79,22 @@ export async function POST(request: Request) {
 
   const profile: AgentProfile = localAgentProfile(localEntry);
 
-  // 端点与模型取登记条目，密钥与 token 上限取统一配置（与沙盒路由同段逻辑）
+  const overrides = sanitizeOverrides(payload.overrides);
+
+  if ("error" in overrides) {
+    return jsonError(overrides.error, overrides.hint, 400);
+  }
+
   const novaConfig = getConfig();
   const effectiveSettings = {
-    baseUrl: localEntry.endpoint,
+    baseUrl: normalizeEndpoint(overrides.value.endpoint ?? localEntry.endpoint),
+    // 密钥优先级：界面覆盖 > 登记的 env 变量 > 统一配置（.env 的 NOVA_LLM_API_KEY）
     apiKey:
+      overrides.value.apiKey ||
       process.env[localEntry.apiKeyEnv]?.trim() ||
       novaConfig.agent.llm.apiKey ||
       "",
-    model: localEntry.model,
+    model: overrides.value.model ?? localEntry.model,
     maxTokens: novaConfig.agent.llm.maxTokens,
     timeoutMs: novaConfig.agent.llm.timeoutMs,
   };
@@ -266,6 +279,67 @@ function sanitizeToolCall(
         typeof fn.arguments === "string" ? fn.arguments.slice(0, 4_000) : "{}",
     },
   };
+}
+
+/** 覆盖值的长度上限：端点 / 模型 / 密钥都远用不到这么长 */
+const OVERRIDE_LIMITS = { endpoint: 300, model: 120, apiKey: 300 } as const;
+
+/**
+ * 校验可视化配置覆盖值。
+ *
+ * 端点会由服务端发起请求，是潜在的 SSRF 面：协议必须显式为 http(s)，
+ * 长度全部钳到远超实际用量的上限；字段缺省（undefined）表示沿用默认。
+ */
+function sanitizeOverrides(
+  overrides: unknown,
+): { value: ConverseOverrides } | { error: string; hint?: string } {
+  if (overrides === undefined || overrides === null) {
+    return { value: {} };
+  }
+  if (typeof overrides !== "object" || Array.isArray(overrides)) {
+    return { error: "overrides 必须是对象" };
+  }
+
+  const record = overrides as Record<string, unknown>;
+  const value: ConverseOverrides = {};
+
+  if (record.endpoint !== undefined && record.endpoint !== "") {
+    if (typeof record.endpoint !== "string") {
+      return { error: "overrides.endpoint 必须是字符串" };
+    }
+    const endpoint = record.endpoint.trim().slice(0, OVERRIDE_LIMITS.endpoint);
+    try {
+      const parsed = new URL(endpoint);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return {
+          error: "overrides.endpoint 只允许 http/https 协议",
+          hint: "端点形如 https://api.example.com/v1。",
+        };
+      }
+      value.endpoint = endpoint;
+    } catch {
+      return {
+        error: "overrides.endpoint 不是合法 URL",
+        hint: "端点形如 https://api.example.com/v1（带 /v1，无末尾斜杠）。",
+      };
+    }
+  }
+
+  if (record.model !== undefined && record.model !== "") {
+    if (typeof record.model !== "string") {
+      return { error: "overrides.model 必须是字符串" };
+    }
+    value.model = record.model.trim().slice(0, OVERRIDE_LIMITS.model);
+  }
+
+  if (record.apiKey !== undefined && record.apiKey !== "") {
+    if (typeof record.apiKey !== "string") {
+      return { error: "overrides.apiKey 必须是字符串" };
+    }
+    value.apiKey = record.apiKey.trim().slice(0, OVERRIDE_LIMITS.apiKey);
+  }
+
+  return { value };
 }
 
 function jsonError(message: string, hint?: string, status = 500) {
