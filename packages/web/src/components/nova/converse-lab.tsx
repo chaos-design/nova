@@ -1028,36 +1028,10 @@ const VerificationCard = memo(function VerificationCard({
   index: number;
   isLast: boolean;
 }) {
-  // thinking 块：执行中默认展开、落定后自动收起（失败轮保留，要看出什么事）
-  const [thinkingOpen, setThinkingOpen] = useState(
-    turn.status === "running" || turn.status === "failed",
-  );
+  // thinking 块默认展开：全过程可见，用户可手动收起
+  const [thinkingOpen, setThinkingOpen] = useState(true);
   const result = turn.result;
   const running = turn.status === "running";
-
-  const prevStatusRef = useRef(turn.status);
-  useEffect(() => {
-    // 进入执行：展开；落定为完成：收起，让回复成为主体
-    if (prevStatusRef.current !== "running" && turn.status === "running") {
-      setThinkingOpen(true);
-    }
-    if (
-      prevStatusRef.current === "running" &&
-      (turn.status === "completed" || turn.status === "stopped")
-    ) {
-      setThinkingOpen(false);
-    }
-    prevStatusRef.current = turn.status;
-  }, [turn.status]);
-
-  // 新一轮开始后自动收起旧卡的过程块（失败轮保留展开：要看出什么事）
-  const prevIsLastRef = useRef(isLast);
-  useEffect(() => {
-    if (prevIsLastRef.current && !isLast && turn.status !== "failed") {
-      setThinkingOpen(false);
-    }
-    prevIsLastRef.current = isLast;
-  }, [isLast, turn.status]);
 
   // 执行中把最新一步亮出来：不用展开过程块也能看到 Agent 正在做什么
   const latestStep = running ? turn.logs.at(-1) : undefined;
@@ -1152,7 +1126,7 @@ const VerificationCard = memo(function VerificationCard({
               )}
               <LogStream
                 logs={turn.logs}
-                className="h-44"
+                className="min-h-14 max-h-64"
                 emptyHint="等待事件…"
               />
             </div>

@@ -23,11 +23,17 @@ export function LogStream({
   emptyHint = "等待事件…",
 }: {
   logs: readonly SimulationLog[];
+  /** 高度模式：不传时固定 h-72；传 max-h-* 则按内容撑起、超出封顶内滚动 */
   className?: string;
   emptyHint?: string;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
   const lastLogId = logs.at(-1)?.id ?? "";
+  // 高度交给调用方决定：默认固定高度走 ScrollArea；传 max-h-* 时按内容
+  // 撑起、超出封顶内滚动——该模式下 Radix 视口的 h-full 解析不可靠，
+  // 改用原生滚动容器
+  const heightClass = className ?? "h-72";
+  const autoHeight = className?.includes("max-h-") ?? false;
 
   // 新增日志时跟随到底部；用户主动上滑查看历史时则不打断
   useEffect(() => {
@@ -41,8 +47,8 @@ export function LogStream({
     return (
       <div
         className={cn(
-          "grid h-72 place-items-center font-mono text-xs text-muted-foreground",
-          className,
+          "grid place-items-center font-mono text-xs text-muted-foreground",
+          heightClass,
         )}
       >
         {emptyHint}
@@ -50,8 +56,48 @@ export function LogStream({
     );
   }
 
+  if (autoHeight) {
+    return (
+      <div ref={viewport} className={cn("overflow-y-auto", heightClass)}>
+        <ol className="space-y-1 pr-3 font-mono text-xs">
+          {logs.map((log) => (
+            <li
+              key={log.id}
+              className="grid grid-cols-[auto_1fr] items-start gap-2 rounded px-1 py-0.5 transition-colors hover:bg-white/3"
+            >
+              <span className="flex items-center gap-1.5">
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "h-3 w-0.5 rounded-full",
+                    LOG_LEVEL_BAR_CLASS[log.level],
+                  )}
+                />
+                <span className="text-muted-foreground/70 tabular-nums">
+                  {formatDuration(log.atMs)}
+                </span>
+              </span>
+              <span className="min-w-0">
+                <span className="text-muted-foreground/50">#{log.step}</span>{" "}
+                <span className={cn("uppercase", LOG_LEVEL_CLASS[log.level])}>
+                  [{log.actor}]
+                </span>{" "}
+                <span className="text-foreground/90">{log.message}</span>
+                {log.detail && (
+                  <span className="block truncate text-[0.6875rem] text-muted-foreground/70">
+                    ↳ {log.detail}
+                  </span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ol>
+      </div>
+    );
+  }
+
   return (
-    <ScrollArea ref={viewport} className={cn("h-72", className)}>
+    <ScrollArea ref={viewport} className={heightClass}>
       <ol className="space-y-1 pr-3 font-mono text-xs">
         {logs.map((log) => (
           <li
