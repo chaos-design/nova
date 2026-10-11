@@ -7,7 +7,15 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!node_modules", "!.next", "!dist", "!build"]
+    "includes": [
+      "**",
+      "!node_modules",
+      "!.next",
+      "!coverage",
+      "!release",
+      "!dist",
+      "!build"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -42,7 +50,7 @@
   },
   "overrides": [
     {
-      "includes": ["src/components/ui/**"],
+      "includes": ["packages/web/src/components/ui/**"],
       "linter": {
         "rules": {
           "security": {
@@ -55,7 +63,7 @@
       }
     },
     {
-      "includes": ["src/app/nova-theme.css"],
+      "includes": ["packages/web/src/app/nova-theme.css"],
       "linter": {
         "rules": {
           "complexity": {
@@ -65,11 +73,31 @@
       }
     },
     {
-      "includes": ["src/app/(nova)/docs/sections.tsx"],
+      "includes": ["packages/web/src/app/(nova)/docs/sections.tsx"],
       "linter": {
         "rules": {
           "suspicious": {
             "noArrayIndexKey": "off",
+            "noTemplateCurlyInString": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/web/tests/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noTemplateCurlyInString": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/nova-config/tests/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
             "noTemplateCurlyInString": "off"
           }
         }

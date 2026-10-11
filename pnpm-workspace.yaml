@@ -1,0 +1,10 @@
+# pnpm monorepo 工作区定义。
+# 两个顶层目录各自是一个 workspace：
+#   packages/    平台本体（当前只有一个成员：@chaos-design/web，Next.js 控制台）
+#   playground/  被评测的本地 Agent（@chaos-design/nova-local，OpenAI 兼容端点）
+#
+# 根目录自身也是 workspace 成员（持有编排脚本所需的最小依赖），
+# 根 package.json 只放跨包的编排命令，不放业务依赖。
+packages:
+  - "packages/*"
+  - "playground/*"

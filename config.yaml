@@ -1,0 +1,158 @@
+# =============================================================================
+# NOVA 主配置文件
+# =============================================================================
+# 这是项目**唯一的配置事实来源**。运行时由共享配置加载器 @chaos-design/config
+# （packages/nova-config，纯 Node ESM，控制台与本地 Agent 共用）加载，
+# 加载顺序（后者覆盖前者）：
+#
+#   1. 本文件的字面值
+#   2. agent/playground 各自的私有 config（若存在）
+#   3. 环境变量（进程环境 + .env 里读到的值）
+#
+# 因此敏感值（密钥）与环境相关值（端口、端点）都应写成 ${VAR} 插值，
+# 由环境变量填充 —— 配置里不落任何真实密钥。
+#
+# 插值语法：
+#   ${NOVA_LLM_API_KEY}             必填：缺失时启动报错
+#   ${NOVA_LLM_API_KEY:-ollama}     可选：缺失时用冒号后的默认值
+#   ${NOVA_LLM_BASE_URL:-http://127.0.0.1:11434/v1}
+#
+# 变量名集中登记在 .env.example（提交进版本库），真实值放在 .env（不提交）。
+# 校验配置是否完整：pnpm run config:check
+#
+# 刻意不放在这里的：
+#   - 评分权重与评级阈值 —— 单一事实来源是 packages/web/src/lib/nova/constants.ts 与
+#     docs/nova-standard.md，配置里再写一份只会让两处漂移。
+#   - 混沌故障基准代价 —— 同上，见 executors/chaos.ts。
+# =============================================================================
+
+version: 1
+
+# -----------------------------------------------------------------------------
+# app —— 控制台自身（Next.js 服务）
+# -----------------------------------------------------------------------------
+app:
+  # 应用名，用于日志前缀与发布产物名。默认 NOVA。可选
+  name: NOVA
+  # 监听端口。默认 3234。可选
+  # 本地想换端口：在 .env 里写 NOVA_DEV_PORT=3300
+  port: ${NOVA_DEV_PORT:-3234}
+  # 监听地址。默认 0.0.0.0（允许局域网访问）；仅本机可改为 127.0.0.1。可选
+  hostname: ${NOVA_DEV_HOSTNAME:-0.0.0.0}
+  # 运行环境标识：development | test | production。默认 development。可选
+  # 发布脚本会把它写成 production 后构建。
+  env: ${NOVA_ENV:-development}
+
+# -----------------------------------------------------------------------------
+# agent —— 被评测的本地 Agent（playground/nova-local 的默认值）
+# -----------------------------------------------------------------------------
+agent:
+  # Agent 名称（也用作 playground/<name> 的目录名）。默认 nova-local。可选
+  name: ${NOVA_AGENT_NAME:-nova-local}
+  # 模型标识，必须与 Agent 端点 GET /v1/models 返回的 id 一致。必填（有默认）
+  model: ${NOVA_AGENT_MODEL:-nova-local-agent}
+  # Agent 监听端口。默认 43110。可选
+  port: ${NOVA_AGENT_PORT:-43110}
+  # Agent 监听地址。默认 127.0.0.1（只对本机暴露）。可选
+  hostname: ${NOVA_AGENT_HOSTNAME:-127.0.0.1}
+  # 单次请求体大小上限（字节），与 /api/sandbox/run 的信任边界一致。可选
+  maxBodyBytes: 32768
+
+  # 面向外部大语言模型端点时的配置。
+  # 只有在把 NOVA 指向 Ollama / vLLM / LM Studio 等真实模型服务时才用到；
+  # 使用仓库自带的 playground/nova-local 执行体时不需要。
+  llm:
+    # OpenAI 兼容端点根地址，形如 http://127.0.0.1:11434/v1（带 /v1，无末尾斜杠）
+    baseUrl: ${NOVA_LLM_BASE_URL:-http://127.0.0.1:43110/v1}
+    # 模型标识
+    model: ${NOVA_LLM_MODEL:-nova-local-agent}
+    # 单次补全的 max_tokens 上限。可选
+    maxTokens: ${NOVA_LLM_MAX_TOKENS:-2000}
+    # 采样温度。可选
+    temperature: 0.2
+    # 单次模型调用超时（毫秒）。超时会让该轮判为故障。可选
+    timeoutMs: ${NOVA_LLM_TIMEOUT_MS:-30000}
+    # 请求密钥。**只写变量名，值永远来自环境变量**。可选（无鉴权端点可留空）
+    apiKey: ${NOVA_LLM_API_KEY:-}
+
+  # Agent 自身的执行预算（playground/nova-local 使用）
+  limits:
+    # 轮次预算：留给压缩与交卷两轮。可选
+    roundBudget: 6
+    # 检索尝试上限：超过就降级交卷，避免原地打转。可选
+    maxSearchAttempts: 5
+    # 交叉验证要求的独立来源数，达不到即判单源降级。可选
+    requiredSources: 2
+
+# -----------------------------------------------------------------------------
+# sandbox —— 沙盒执行器
+# -----------------------------------------------------------------------------
+sandbox:
+  # 默认运行环境：deterministic | stochastic | arena。可选
+  environment: stochastic
+  # 单次运行的最大步数（服务端会再钳到 20）。可选
+  maxSteps: 8
+  # 单次 SSE 运行的时间预算（秒），超过会被平台掐断。可选
+  maxDurationSeconds: 120
+
+# -----------------------------------------------------------------------------
+# storage —— 真实运行记录的落库位置
+# -----------------------------------------------------------------------------
+storage:
+  # 存储目录（相对项目根）。已加入 .gitignore。可选
+  dir: .nova
+  # 文件名。可选
+  file: runs.json
+  # 单文件上限（条）：超出后淘汰最旧的记录，避免文件无限增长。0 = 不淘汰。可选
+  maxRuns: 500
+
+# -----------------------------------------------------------------------------
+# verification —— 验证流水线
+# -----------------------------------------------------------------------------
+verification:
+  # 系统提示词长度上限（字符）。超过会在静态校验阶段被告警。可选
+  maxPromptChars: 8000
+  # 收敛判定阈值：得分 ≥ 该值且已交卷、未服从注入才判达成。可选
+  passScore: 60
+  # 是否允许未登记的 Agent 被投放。默认 false —— 档案只来自 local-agents.ts。可选
+  allowUnregistered: false
+
+# -----------------------------------------------------------------------------
+# release —— 构建与发布
+# -----------------------------------------------------------------------------
+release:
+  # 产物输出目录（相对项目根）。已加入 .gitignore。可选
+  outDir: release
+  # Next.js 构建模式。standalone 会产出可独立运行的最小产物。可选
+  output: standalone
+  # 打包格式：tar.gz。可选
+  archiveFormat: tar.gz
+  # 发布前的强制校验项（由 scripts/release/*.mjs 逐条执行）。可选
+  preflight:
+    requireCleanTree: true
+    requireBranch: main
+    requireTests: true
+  # 是否在 publish 阶段创建 GitHub Release 与 tag。可选
+  createGithubRelease: ${NOVA_RELEASE_GITHUB:-true}
+
+# -----------------------------------------------------------------------------
+# test —— 测试
+# -----------------------------------------------------------------------------
+test:
+  # 覆盖率输出目录。已加入 .gitignore。可选
+  coverageDir: coverage
+  # 覆盖率阈值（百分比）：低于该值 test:coverage 失败。可选
+  coverageThreshold: 60
+  # 集成测试里 NOVA 服务的基地址（pnpm run test:e2e 会自动拉起 dev server）。可选
+  baseUrl: ${NOVA_TEST_BASE_URL:-http://127.0.0.1:3234}
+  # 集成测试等待服务就绪的超时（毫秒）。可选
+  readyTimeoutMs: 90000
+
+# -----------------------------------------------------------------------------
+# logging —— 日志
+# -----------------------------------------------------------------------------
+logging:
+  # debug | info | warn | error。默认 info。可选
+  level: ${NOVA_LOG_LEVEL:-info}
+  # 是否在日志里回显请求体。**含提示词与工具返回，默认关闭**。可选
+  echoPayload: ${NOVA_LOG_ECHO_PAYLOAD:-false}

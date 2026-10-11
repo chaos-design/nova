@@ -1,0 +1,47 @@
+name: CI
+
+# 控制台带 API 路由与 SSE 流式，无法托管在 GitHub Pages 等纯静态平台；
+# 部署走 Vercel（见 docs/deploy.md），Actions 只负责质量门禁。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-and-test:
+    name: typecheck / lint / test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # pnpm 版本从根 package.json 的 packageManager 字段解析（pnpm@10.28.1）
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # tsc 依赖 Next 生成的全局路由类型（LayoutProps / PageProps / RouteContext，
+      # 落在 .next/types），而 .next 被 gitignore、CI 全新检出里不存在。
+      # 与 AGENTS.md §3.1 同一条命令，先于 typecheck 生成。
+      - name: Generate Next route types
+        run: pnpm --filter @chaos-design/web exec next typegen
+
+      # typecheck + biome（check 与本地 pnpm run check 同口径）
+      - name: Check
+        run: pnpm run check
+
+      # 各包单测 + 集成测（e2e 需 dev server 与本地 Agent，不进 CI）
+      - name: Test
+        run: pnpm run test

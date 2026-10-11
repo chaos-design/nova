@@ -22,10 +22,11 @@
 | API 与安全 | 2 | 0 | 0 | 0 |
 | 沙盒执行链路 | 3 | 0 | 0 | 0 |
 | 界面与项目约定 | 1 | 0 | 1 | 0 |
-| 代码卫生 | 0 | 0 | 1 | 0 |
+| 代码卫生 | 1 | 0 | 0 | 0 |
 | 数据与口径 | 0 | 0 | 0 | 1 |
 | 平台能力 | 0 | 0 | 0 | 1 |
-| **总计** | **6** | **0** | **2** | **2** |
+| 对接口径与本地 Agent | 1 | 0 | 0 | 0 |
+| **总计** | **8** | **0** | **1** | **2** |
 
 ### 任务索引
 
@@ -38,9 +39,10 @@
 | [T05](archive/2026-10-07-t05-executor-consistency-done.md) | 执行器口径一致性修正 | P2 | 沙盒执行链路 | ✅ completed 10-07 |
 | [T06](planning/06-p2-convention-convergence.md) | 项目约定收敛：语义色、barrel 出口与常量复用 | P2 | 界面与项目约定 | planned |
 | [T07](archive/2026-10-07-t07-interaction-a11y-done.md) | 交互与可达性打磨 | P2 | 界面与项目约定 | ✅ completed 10-07 |
-| [T08](planning/08-p2-dead-code.md) | 死代码清理 | P2 | 代码卫生 | planned（`local-agents.ts` 失引注释已随 T03 轮修复） |
+| [T08](archive/2026-10-10-t08-dead-code-done.md) | 死代码清理 | P2 | 代码卫生 | ✅ completed 10-10 |
 | [T09](pending/01-run-scores-provenance.md) | 历史运行分数的口径归属 | P2 | 数据与口径 | blocked |
 | [T10](pending/02-real-backend.md) | 真实后端与持久化接入 | P2 | 平台能力 | blocked |
+| [T11](archive/2026-10-10-t11-agent-protocol-standardization-done.md) | Agent 对接协议规范化与本地执行体完善 | P2 | 对接口径与本地 Agent | ✅ completed 10-10 |
 
 下一轮建议：T08（死代码，含被 T06 联动的导出处置）→ T06（语义色收敛，按组件分批）。
 

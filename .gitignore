@@ -1,27 +1,19 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-/node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
+# pnpm monorepo：根与各 workspace 都会生成本地 node_modules
+node_modules
+/.pnpm-store
 
 # testing
-/coverage
+**/coverage
 
 # next.js
-/.next/
-/out/
+**/.next
+out
 
 # nova 真实运行记录（本地落库，非演示数据）
 /.nova/
 
 # production
-/build
+build
 
 # misc
 .DS_Store
@@ -34,7 +26,12 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
-.env*
+# .env 只在本机使用，绝不提交；.env.example 是模板，必须提交
+.env
+!.env.example
+
+# 发布产物（pnpm run release:package 的输出）
+/release/
 
 # vercel
 .vercel
@@ -42,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 本地 AI 工具的工作目录，不入库
+.workbuddy/
+.zcode/

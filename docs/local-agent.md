@@ -25,7 +25,10 @@
 ## 1. NOVA 期望的 Agent 协议
 
 NOVA 不与任何特定框架绑定，只要你的 Agent 对外暴露一个
-**OpenAI 兼容的 HTTP 端点**，就能被沙盒执行器驱动：
+**OpenAI 兼容的 HTTP 端点**，就能被沙盒执行器驱动。线上格式的权威定义
+（端点契约、请求 / 响应 Schema、工具与任务书、故障文案、SSE 事件、
+安全边界与登记规则）见 [`docs/agent-protocol.md`](agent-protocol.md)——
+本节只是它的速览，两处冲突时以协议文档为准。
 
 | 能力 | 约定 |
 | :--- | :--- |
@@ -64,9 +67,9 @@ Agent 的每一次决策都必须落在 `tool_calls` 或最终文本上——沙
 
 ## 2. 开发一个本地 Agent
 
-最小实现只需两个路由。下面用 Node.js（`node server.mjs`）写一个 40 行的桩——
-它也收录在仓库里，可直接运行：`node examples/local-agent/minimal.mjs`
-（端口 43111，与完整示例的 43110 错开）：
+最小实现只需两个路由。下面用 Node.js（`node server.mjs`）写一个 40 行的桩，
+监听 Ollama 默认端口 11434（换成你自己的端口即可，别撞 43110）——
+完整实现见 `playground/nova-local/`（`pnpm run agent:local` 即可运行，端口 43110）：
 
 ```js
 // server.mjs
@@ -130,7 +133,7 @@ createServer((req, res) => {
 
 ## 3. 注册进 NOVA
 
-在 `src/lib/nova/local-agents.ts` 的 `LOCAL_AGENTS` 数组中追加一条登记：
+在 `packages/web/src/lib/nova/local-agents.ts` 的 `LOCAL_AGENTS` 数组中追加一条登记：
 
 ```ts
 {
@@ -147,7 +150,7 @@ createServer((req, res) => {
 }
 ```
 
-> 仓库已预置两条登记（SOLVER 与 STUB，见第 6、7 节）。自己接入时请换用
+> 仓库已预置一条登记（NOVA-LOCAL，见第 6 节）。自己接入时请换用
 > 新的 `id`，不要覆盖样例。
 
 规则（不可违反）：
@@ -179,7 +182,7 @@ createServer((req, res) => {
 ### 环境变量约定
 
 ```bash
-# .env.local —— 内置 Agent（或 SOLVER 这类用 LLM_API_KEY 的本地 Agent）
+# .env.local —— 内置 Agent（或 NOVA-LOCAL 这类用 LLM_API_KEY 的本地 Agent）
 LLM_BASE_URL=http://127.0.0.1:11434/v1
 LLM_API_KEY=<你的密钥；无鉴权端点留空>
 LLM_MODEL=my-local-agent-v1
@@ -202,15 +205,15 @@ LLM_MODEL=my-local-agent-v1
 下图为一次真实执行：延迟故障后按原参数重试并判定自愈，
 畸形载荷被容错处理，最终高分达成：
 
-![沙盒真实执行：STUB 全程事件流与评分](images/sandbox-live-run.png)
+![沙盒真实执行：NOVA-LOCAL 全程事件流与评分](images/sandbox-live-run.png)
 
 ## 6. 仓库自带的真实执行体：NOVA-LOCAL
 
-[`examples/local-agent/nova-agent.mjs`](../examples/local-agent/nova-agent.mjs)
+[`playground/nova-local/`](../playground/nova-local)
 是仓库自带、开箱即跑的**真实 Agent**，零依赖（不需要任何模型服务）：
 
 ```bash
-npm run agent:local
+pnpm run agent:local
 # NOVA 本地 Agent 已启动：http://127.0.0.1:43110/v1（模型 nova-local-agent）
 ```
 
@@ -220,6 +223,9 @@ npm run agent:local
   里重建状态；
 - **决策来自观测**：读的是工具真实返回的 JSON（条数、字段、错误文案），
   据此决定重试 / 换检索式 / 压缩 / 交卷；
+- **故障分诊**：可恢复故障（延迟 / 限流 / 畸形）按原检索式重试一次，
+  硬故障（工具调用失败、熔断器已打开）听从执行器「改走备用路径」的提示，
+  不原地重试；429 限流的重试话术带指数退避语义；
 - **结论是真算出来的**：交叉比对两个结果集的字段集与声明条数，
   缺口由集合差算出，平均相关度由实际 `score` 求均值；
 - **注入只拒绝、不服从**：识别越权指令后显式拒绝并继续原任务，
@@ -230,7 +236,7 @@ npm run agent:local
 | 轮次 | 行为 | 对应可观测项 |
 | :--- | :--- | :--- |
 | 1 | 按任务书主题发起第一个侧面的 `external_search` | `distinctQueries +1` |
-| 2 | 失败则**按原检索式重试**，否则开启第二个侧面 | `recoveries +1`（自愈） |
+| 2 | 可恢复故障（延迟/限流）按原检索式重试；硬故障（工具熔断）跳过重试、改走备用路径；否则开启第二个侧面 | `recoveries +1`（自愈） |
 | 3 | `summarize` 压缩两个来源的记录 | `summarizeCalls +1` |
 | 4 | 输出交叉比对结论（含真实数据缺口）并交卷 | `finished = true` |
 

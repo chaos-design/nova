@@ -1,0 +1,30 @@
+{
+  "name": "@chaos-design/config",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NOVA 统一配置加载器（控制台与本地 Agent 共享的配置读取入口）",
+  "type": "module",
+  "main": "./src/config.mjs",
+  "types": "./src/config.d.mts",
+  "exports": {
+    ".": {
+      "types": "./src/config.d.mts",
+      "import": "./src/config.mjs",
+      "default": "./src/config.mjs"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "js-yaml": "^4.3.2"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@vitest/coverage-v8": "^3.2.7",
+    "typescript": "^5",
+    "vitest": "^3.2.7"
+  }
+}

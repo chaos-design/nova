@@ -9,14 +9,14 @@
 
 ```mermaid
 flowchart TD
-    subgraph SERVER["Next.js 服务端"]
-        P["页面层 · src/app/(nova)/*/page.tsx<br/>Server Component：取数 · 组装 · 首屏渲染"]
-        RH["Route Handler（无状态代理）<br/>POST /api/sandbox/run · POST /api/agents/probe"]
-        D["领域层 · src/lib/nova<br/>类型 / 常量 / 评分 / 剧本 / 报告 / 执行器<br/>无 React 依赖，任何环境可运行"]
+    subgraph SERVER["Next.js 服务端（packages/web）"]
+        P["页面层 · packages/web/src/app/(nova)/*/page.tsx<br/>Server Component：取数 · 组装 · 首屏渲染"]
+        RH["Route Handler（无状态代理）<br/>POST /api/sandbox/run · POST /api/agents/converse · POST /api/agents/probe"]
+        D["领域层 · packages/web/src/lib/nova<br/>类型 / 常量 / 评分 / 剧本 / 报告 / 执行器<br/>无 React 依赖，任何环境可运行"]
     end
     subgraph CLIENT["浏览器"]
         C["组件层<br/>layout 外壳 · nova 领域组件 · ui（shadcn 托管）"]
-        H["Hook 层 · src/hooks<br/>时间推进型状态机"]
+        H["Hook 层 · packages/web/src/hooks<br/>时间推进型状态机"]
     end
     E["外部 · OpenAI 兼容端点<br/>（本地 Agent / Ollama / vLLM …）"]
 
@@ -25,13 +25,19 @@ flowchart TD
     H -->|"纯函数调用"| D
     P -->|"同步读取"| D
     RH --> D
-    C -->|"fetch 仅限沙盒/探针"| RH
+    C -->|"fetch 仅限沙盒/对话/探针"| RH
     RH -->|"chat/completions · models"| E
 ```
 
 依赖方向严格单向向下。领域层不 import 任何组件或 hook，因此它可以被
 Server Component、Client Component、Route Handler、脚本任务复用。
-页面里唯一的 `fetch` 是沙盒执行与端点探针 —— 它们必须经过服务端（理由见下节）。
+页面里唯一的 `fetch` 是沙盒执行、对话验证与端点探针 —— 它们必须经过服务端（理由见下节）。
+
+**workspace 布局**：控制台本体在 `packages/web`；跨包共享的只有配置加载器
+`packages/nova-config`（`@chaos-design/config`，纯 Node ESM，导出 `getConfig` / `loadConfig`
+/ `projectRoot`），web 与本地 Agent（`playground/nova-local`）都依赖它读仓库根
+`config.yaml`。仓库根数据文件（`config.yaml`、`.env`、`.nova/`）由 `projectRoot()`
+锚定（向上找 `pnpm-workspace.yaml`），不随各包进程的 cwd 漂移。
 
 ---
 
@@ -63,6 +69,7 @@ Route Handler 只做**无状态的服务端代理**，不保存、不编造任�
 | 路由 | 职责 |
 | :--- | :--- |
 | `POST /api/sandbox/run` | 调真实 LLM 执行器，SSE 把沙盒事件流回客户端 |
+| `POST /api/agents/converse` | 对话验证：代执行 Agent 的工具调用并回传一轮对话事件，**不落库、不评分** |
 | `POST /api/agents/probe` | 探测用户填写的 OpenAI 兼容端点是否可达、协议是否兼容 |
 
 在数据源还是本地纯函数时，Route Handler 存在的唯一理由是**必须经过服务端**：
@@ -75,9 +82,9 @@ Route Handler 只做**无状态的服务端代理**，不保存、不编造任�
 **收益为零的事情不做**：页面数据由 `run-store.ts` 直接读取本地存储
 （`local-agents.ts` 提供可投放名单），首屏走 Server Component 直出，不绕 API。
 等接入真实数据库或远端服务时，只需替换 `run-store.ts` 内部的读写实现，
-契约仍由 `src/lib/nova` 的类型定义保证。
+契约仍由 `packages/web/src/lib/nova` 的类型定义保证。
 
-### 2.1 两条真实执行链路
+### 2.1 三条真实执行链路
 
 **端点探针**（接入向导第 2 步）：
 
@@ -120,13 +127,42 @@ sequenceDiagram
     X-->>H: done 事件（评分 · 反思 · 自愈清单 · token 用量）
 ```
 
-![沙盒真实执行：STUB 在混沌注入下的完整事件流与评分](images/sandbox-live-run.png)
+![沙盒真实执行：NOVA-LOCAL 在混沌注入下的完整事件流与评分](images/sandbox-live-run.png)
 
 客户端侧的生命周期约定（`use-sandbox-run.ts`）：
 
 - 组件卸载即 `AbortController.abort()`——离开页面不会留下继续烧 token 的流；
 - 「中止」产生独立的 `stopped` 状态，与「已结束」（自然完成）在界面上可区分；
 - 收到 `done` / `error` 事件后立即取消读取，不空转到 EOF。
+
+**对话验证**（SSE 单请求流式返回，观测路径；客户端约定同上，见 `use-converse.ts`）：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant H as useConverse
+    participant R as POST /api/agents/converse
+    participant X as runConverseTurn 执行器
+    participant T as 工具集（无混沌）
+    participant M as 模型端点
+    H->>R: { agentId, history（历次完成轮次）, userMessage }
+    R->>R: 字节级限长 · 历史逐条裁剪 · systemPrompt 静态校验
+    R->>X: 反查档案（不信客户端档案）+ 组装 LlmSettings
+    loop 单轮 ≤ 4 次模型调用
+        X->>M: chat/completions（tools · 全量历史）
+        M-->>X: tool_calls / 最终回复
+        X->>T: executeTool(name, args, fault=null)
+        T-->>X: ToolOutcome
+        X-->>H: SSE step 事件（模型思考 / 工具调用 / 越权标记）
+    end
+    X-->>H: turn 事件（回复 · tokens · 延迟 · 注入命中标记 · replyMessages）
+```
+
+与沙盒链路的差别：任务书是用户消息 + 历史上下文；工具以 `fault=null`
+执行（不注入混沌，失败只来自 Agent 自身的参数失误）；事件里没有得分
+字段、不写 `run-store`——这是纯观测路径，`/converse` 页不进排行榜，
+`replyMessages` 让下一轮历史可以在客户端无状态拼接（协议约定见
+agent-protocol.md §2「无状态约定」）。
 
 ---
 
@@ -137,7 +173,7 @@ NOVA 不预置任何档案。界面上出现的每个数字都来自一次真实
 
 | 关注点 | 实现 | 说明 |
 | :--- | :--- | :--- |
-| **落库位置** | `run-store.ts` → `.nova/runs.json` | 单文件够用；写入经 Promise 链串行化，并发落库不互相覆盖 |
+| **落库位置** | `run-store.ts` → 仓库根 `.nova/runs.json` | 单文件够用；写入经 Promise 链串行化，并发落库不互相覆盖。路径由 `@chaos-design/config` 的 `projectRoot()` 锚定 monorepo 根，与 `next dev` 的 cwd（`packages/web`）无关 |
 | **落库时机** | `/api/sandbox/run` 收到 `done` 事件 | 放在服务端而非客户端回传 —— 否则评分等于被测方自己给自己打分 |
 | **档案派生** | `LOCAL_AGENTS` 提供身份，运行记录提供评分与状态 | 没跑过的 Agent 不会出现在档案、榜单与矩阵里 |
 | **证书签发** | `recordRun` 按标准 §5 三条规则判定 | 评级 ≥ B、状态已验证、已完成验证，缺一不可 |
@@ -200,8 +236,8 @@ hook 的设计原则是**状态最小化**：
 
 | 文件 | 归属 | 内容 |
 | :--- | :--- | :--- |
-| `src/app/globals.css` | shadcn CLI | 标准令牌（`:root`）、字体映射 |
-| `src/app/nova-theme.css` | NOVA | 霓虹色板、动画关键帧、背景工具类（`nova-backdrop` / `nova-grid` / `nova-panel` …） |
+| `packages/web/src/app/globals.css` | shadcn CLI | 标准令牌（`:root`）、字体映射 |
+| `packages/web/src/app/nova-theme.css` | NOVA | 霓虹色板、动画关键帧、背景工具类（`nova-backdrop` / `nova-grid` / `nova-panel` …） |
 
 **为什么要拆**：`shadcn add` / `shadcn migrate` 会重写 `globals.css` 的标准区块。
 把自有主题隔离在另一个文件里，重写操作永远不会吃掉 NOVA 的视觉配置。
@@ -255,7 +291,7 @@ hook 的设计原则是**状态最小化**：
 - Biome 同时覆盖格式化、lint、import 排序与部分安全规则，速度约为 ESLint 链路的 10~20 倍；
 - 单一工具意味着只有一套配置与一套 CI 步骤。
 
-**例外**：`src/components/ui/`（shadcn 注册表产物）在 `biome.json` 中关掉了
+**例外**：`packages/web/src/components/ui/`（shadcn 注册表产物）在 `biome.json` 中关掉了
 `noArrayIndexKey` 与 `noDangerouslySetInnerHtml` —— 这些文件由 CLI 托管，
 本地规则不该污染可重生成的上游代码。
 
@@ -277,7 +313,7 @@ hook 的设计原则是**状态最小化**：
 
 ### 7.5 领域类型集中于单一文件
 
-**决策**：`src/lib/nova/types.ts` 一个文件承载全部领域类型。
+**决策**：`packages/web/src/lib/nova/types.ts` 一个文件承载全部领域类型。
 
 **理由**：领域模型是这个项目最重要的资产。分散在 10 个文件里，
 读者无法一次建立完整心智模型，也无法在改一个字段时看清影响面。
