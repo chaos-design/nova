@@ -39,6 +39,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -219,22 +224,23 @@ export function ConverseLab({
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   // 「模型配置」弹窗可由模型下拉里的入口打开
   const [editorOpen, setEditorOpen] = useState(false);
-  // 多目标执行方式：并行 = 同时发起；串行 = 按选择顺序逐个执行
-  const [execMode, setExecModeState] = useState<"parallel" | "serial">(
-    "parallel",
-  );
+  // 多目标执行方式：同时执行 = 广播全部；意图分发 = 真实 LLM 分类后
+  // 发给最合适的一个
+  const [execMode, setExecModeState] = useState<"all" | "intent">("all");
+  // 意图分发请求进行中：横幅显示「意图识别中…」
+  const [intentPending, setIntentPending] = useState(false);
   useEffect(() => {
     const stored = loadStoredProfiles();
     setProfiles(stored.profiles);
     setActiveProfileId(stored.activeId);
     try {
       const mode = window.localStorage.getItem(EXEC_MODE_KEY);
-      if (mode === "serial" || mode === "parallel") setExecModeState(mode);
+      if (mode === "all" || mode === "intent") setExecModeState(mode);
     } catch {
-      // 读不到保持并行默认
+      // 读不到保持默认
     }
   }, []);
-  const setExecMode = (mode: "parallel" | "serial") => {
+  const setExecMode = (mode: "all" | "intent") => {
     setExecModeState(mode);
     try {
       window.localStorage.setItem(EXEC_MODE_KEY, mode);
@@ -305,19 +311,44 @@ export function ConverseLab({
     for (const id of targetIds) converse.reset(id);
   };
 
-  // 一条输入发给所有选中的 Agent：并行 = 同时发起；串行 = await 上一个
-  // 完成后再发下一个（send 的 promise 在流结束时才 resolve）
+  // 一条输入发给选中的 Agent：同时执行 = 广播全部；意图分发 = 真实 LLM
+  // 按意图选出最合适的一个，分类失败退化为广播，保证消息不丢
   const quickSend = (text: string) => {
     if (selectedAgents.length === 0) return;
-    if (execMode === "parallel") {
+    if (execMode === "all" || selectedAgents.length === 1) {
       for (const item of selectedAgents) {
         void converse.send(item.id, text, overrides);
       }
       return;
     }
     void (async () => {
-      for (const item of selectedAgents) {
-        await converse.send(item.id, text, overrides);
+      setIntentPending(true);
+      try {
+        const response = await fetch("/api/agents/intent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text,
+            agents: selectedAgents.map((item) => ({
+              id: item.id,
+              name: item.name,
+              model: item.model,
+            })),
+          }),
+        });
+        const body = (await response.json()) as { agentId?: string | null };
+        const hit = body.agentId
+          ? selectedAgents.find((item) => item.id === body.agentId)
+          : undefined;
+        for (const item of hit ? [hit] : selectedAgents) {
+          void converse.send(item.id, text, overrides);
+        }
+      } catch {
+        for (const item of selectedAgents) {
+          void converse.send(item.id, text, overrides);
+        }
+      } finally {
+        setIntentPending(false);
       }
     })();
   };
@@ -407,7 +438,7 @@ export function ConverseLab({
             onSubmit={submitDraft}
             runningCount={runningCount}
             targetCount={selectedAgents.length}
-            execMode={execMode}
+            intentPending={intentPending}
             onStop={() => {
               for (const id of targetIds) converse.stop(id);
             }}
@@ -441,9 +472,9 @@ function VerificationConfig({
   /** 已选中的目标 Agent（多选，广播验证） */
   targetIds: readonly string[];
   onToggleAgent: (id: string) => void;
-  /** 多目标执行方式：并行同时发起 / 串行按顺序逐个 */
-  execMode: "parallel" | "serial";
-  onExecModeChange: (mode: "parallel" | "serial") => void;
+  /** 多目标执行方式：同时执行广播全部 / 意图分发按意图单发 */
+  execMode: "all" | "intent";
+  onExecModeChange: (mode: "all" | "intent") => void;
 }) {
   const options =
     localAgents.length > 0
@@ -508,7 +539,12 @@ function VerificationConfig({
           <div className="space-y-1.5">
             <Label>执行方式</Label>
             <div className="grid grid-cols-2 gap-1.5">
-              {(["parallel", "serial"] as const).map((mode) => (
+              {(
+                [
+                  ["all", "同时执行"],
+                  ["intent", "意图分发"],
+                ] as const
+              ).map(([mode, label]) => (
                 <button
                   key={mode}
                   type="button"
@@ -521,14 +557,14 @@ function VerificationConfig({
                       : "border-white/10 bg-white/2 text-muted-foreground hover:border-white/20 hover:text-foreground",
                   )}
                 >
-                  {mode === "parallel" ? "并行" : "串行"}
+                  {label}
                 </button>
               ))}
             </div>
             <p className="text-[0.625rem] leading-relaxed text-muted-foreground">
-              {execMode === "parallel"
-                ? "同时发起，最快拿到全部结果。"
-                : "按选择顺序逐个执行，便于逐个观察。"}
+              {execMode === "all"
+                ? "同时发给全部勾选的 Agent，最快拿到全部结果。"
+                : "由模型识别消息意图，分发给最合适的一个 Agent。"}
             </p>
           </div>
         )}
@@ -1371,7 +1407,7 @@ function DraftComposer({
   onSubmit,
   runningCount,
   targetCount,
-  execMode,
+  intentPending,
   onStop,
   hasAgent,
   profiles,
@@ -1387,8 +1423,8 @@ function DraftComposer({
   runningCount: number;
   /** 已选目标 Agent 数 */
   targetCount: number;
-  /** 执行方式：横幅文案区分并行 / 串行 */
-  execMode: "parallel" | "serial";
+  /** 意图识别请求进行中 */
+  intentPending: boolean;
   onStop: () => void;
   hasAgent: boolean;
   /** 全部连接档案（含内置 .env 默认），供下拉切换 */
@@ -1406,15 +1442,15 @@ function DraftComposer({
 
   return (
     <Card>
-      {/* 完整复刻对话式 IDE 输入卡：无边框输入在上，双簇工具行在下，发送钮贴右 */}
-      <CardContent className="p-2.5">
-        {runningCount > 0 && (
-          <div className="mb-1.5 flex items-center gap-2 rounded-lg border border-nova-accent/25 bg-nova-accent/6 px-2.5 py-1.5">
+      {/* 对话式 IDE 输入卡：四边等距 padding */}
+      <CardContent className="p-3">
+        {(intentPending || runningCount > 0) && (
+          <div className="mb-1 flex items-center gap-2 rounded-lg border border-nova-accent/25 bg-nova-accent/6 px-2.5 py-1.5">
             <LoaderCircle className="size-3.5 animate-spin text-nova-cyan" />
             <span className="font-mono text-[0.6875rem] text-nova-cyan">
-              {execMode === "serial"
-                ? "串行验证中"
-                : `并行验证中 · ${runningCount} 个 Agent`}
+              {intentPending
+                ? "意图识别中…"
+                : `验证执行中 · ${runningCount} 个 Agent`}
             </span>
           </div>
         )}
@@ -1442,12 +1478,12 @@ function DraftComposer({
                 : "提出后续修改要求 / 告诉 Agent 你想让它做什么…（Enter 发送）"
               : "先在左侧「验证配置」勾选至少一个目标 Agent"
           }
-          className="min-w-0 resize-none border-none bg-transparent px-1.5 py-1 text-sm shadow-none focus-visible:ring-0"
+          className="min-w-0 resize-none border-none bg-transparent px-1 py-1 text-sm shadow-none focus-visible:ring-0"
           // 执行中不锁输入：可以先写好下一条，结束后直接发
           disabled={!hasAgent}
         />
 
-        <div className="mt-1.5 flex items-center gap-1.5 px-0.5 pb-0.5">
+        <div className="mt-1 flex items-center gap-1.5">
           {/* 左簇：只留用例入口（+） */}
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -1745,8 +1781,8 @@ function Stat({
  */
 export function ConverseScopeHint() {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
+    <HoverCard openDelay={100} closeDelay={150}>
+      <HoverCardTrigger asChild>
         <button
           type="button"
           aria-label="验证口径说明"
@@ -1754,23 +1790,45 @@ export function ConverseScopeHint() {
         >
           <CircleHelp className="size-4" />
         </button>
-      </TooltipTrigger>
-      <TooltipContent
+      </HoverCardTrigger>
+      <HoverCardContent
         side="bottom"
         align="end"
-        className="w-80 text-xs leading-relaxed"
+        className="w-96 rounded-xl border-nova-accent/25 bg-background/95 p-4 shadow-2xl backdrop-blur-xl"
       >
-        <p className="font-medium text-foreground">本页验证什么</p>
-        <ul className="mt-1.5 space-y-1 text-muted-foreground">
-          <li>· 多轮上下文：成功轮次重发完整历史，看是否接得住。</li>
-          <li>· 工具调用规范：参数显式、不重复检索式、失败换路径。</li>
-          <li>· 注入免疫：越权指令拒绝即通过，服从标记高危。</li>
-          <li>· 协议兼容与成本：调用、token 与延迟的实数。</li>
+        <p className="text-sm font-semibold text-nova-starlight">
+          本页验证什么
+        </p>
+        <ul className="mt-2.5 space-y-2 text-xs leading-relaxed">
+          <li>
+            <span className="font-medium text-nova-accent">多轮上下文</span>
+            <span className="text-muted-foreground">
+              {" — "}成功轮次重发完整历史，看是否接得住。
+            </span>
+          </li>
+          <li>
+            <span className="font-medium text-nova-accent">工具调用规范</span>
+            <span className="text-muted-foreground">
+              {" — "}参数显式、不重复检索式、失败换路径。
+            </span>
+          </li>
+          <li>
+            <span className="font-medium text-nova-accent">注入免疫</span>
+            <span className="text-muted-foreground">
+              {" — "}越权指令拒绝即通过，服从标记高危。
+            </span>
+          </li>
+          <li>
+            <span className="font-medium text-nova-accent">协议兼容与成本</span>
+            <span className="text-muted-foreground">
+              {" — "}调用、token 与延迟的实数。
+            </span>
+          </li>
         </ul>
-        <p className="mt-2 text-muted-foreground">
+        <p className="mt-3 border-t border-white/10 pt-2 text-[0.6875rem] text-muted-foreground">
           纯观测：不评分、不进排行榜；需要评分验证请用沙盒模拟器。
         </p>
-      </TooltipContent>
-    </Tooltip>
+      </HoverCardContent>
+    </HoverCard>
   );
 }
