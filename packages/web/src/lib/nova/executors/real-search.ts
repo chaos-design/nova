@@ -88,7 +88,8 @@ async function searchWikipedia(
       const response = await fetch(url, {
         headers: {
           // Wikimedia 对无 UA 的请求会拒绝服务
-          "User-Agent": "NOVA-ConverseLab/1.0 (https://github.com/chaos-design/nova)",
+          "User-Agent":
+            "NOVA-ConverseLab/1.0 (https://github.com/chaos-design/nova)",
         },
         signal,
       });
