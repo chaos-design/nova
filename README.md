@@ -181,7 +181,7 @@ NOVA_AGENT_PORT=43112 pnpm run agent:local
 | `pnpm run dev` | 启动控制台（读配置端口，Turbopack 热重载） | 配置自检通过 |
 | `pnpm run dev:agent` | 启动 `playground/nova-local` 本地 Agent | 配置自检通过 |
 | `pnpm run dev:research` / `dev:coder` | 启动领域专家 Agent（调研专员 / 工程搭档） | 配置自检通过 |
-| `pnpm run dev:all` | 一条命令同时拉起上面两个 | 同上 |
+| `pnpm run dev:all` | 一条命令同时拉起控制台与 nova-local（不含专家 Agent） | 同上 |
 | `pnpm run lint` / `lint:fix` / `format` | Biome 规范检查与格式化 | — |
 | `pnpm run typecheck` | TypeScript 类型检查 | — |
 | `pnpm run check` | `typecheck` + `lint`，**提交前跑这个** | — |
