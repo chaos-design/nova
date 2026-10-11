@@ -62,7 +62,8 @@ export async function POST(request: Request) {
         {
           role: "system",
           content:
-            "你是任务分发器。根据用户消息的意图，从候选 Agent 中选出最合适的一个，只输出该 Agent 的 id，不要输出任何其他文字。",
+            "你是任务分发器。根据用户消息的意图，从候选 Agent 中选出最合适的一个。" +
+            "只输出该 Agent 的 id 原文（形如 agt-local-xxx），禁止输出名称、解释、标点或其他任何文字。",
         },
         {
           role: "user",
@@ -71,15 +72,18 @@ export async function POST(request: Request) {
       ],
       tools: [],
       temperature: 0,
-      maxTokens: 20,
+      maxTokens: 30,
       signal: AbortSignal.timeout(INTENT_TIMEOUT_MS),
     });
 
+    // 解析逐级放宽：原文包含 id > 名称；仍不命中时确定性落到第一个候选。
+    // 兜底绝不广播——意图分发的语义是单发，宁可单调也不能重复问答。
     const output = completion.content.trim();
     const hit =
       candidates.find((item) => output.includes(item.id)) ??
-      candidates.find((item) => output.includes(item.name));
-    return Response.json({ agentId: hit?.id ?? null, output });
+      candidates.find((item) => output.includes(item.name)) ??
+      candidates[0];
+    return Response.json({ agentId: hit.id, output });
   } catch (error) {
     if (error instanceof LlmError) {
       return json({ message: error.message, hint: error.hint }, 502);

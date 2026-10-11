@@ -382,16 +382,15 @@ export function ConverseLab({
           }),
         });
         const body = (await response.json()) as { agentId?: string | null };
-        const hit = body.agentId
-          ? selectedAgents.find((item) => item.id === body.agentId)
-          : undefined;
-        for (const item of hit ? [hit] : selectedAgents) {
-          void converse.send(item.id, text, overrides, promptArg);
-        }
+        // 服务端保证返回候选内的 agentId（解析失败落到第一个候选）：
+        // 意图分发永远单发，绝不把同一问题重复投递
+        const target =
+          selectedAgents.find((item) => item.id === body.agentId) ??
+          selectedAgents[0];
+        void converse.send(target.id, text, overrides, promptArg);
       } catch {
-        for (const item of selectedAgents) {
-          void converse.send(item.id, text, overrides, promptArg);
-        }
+        // 识别请求本身失败：确定性单发给第一个 Agent，不广播
+        void converse.send(selectedAgents[0].id, text, overrides, promptArg);
       } finally {
         setIntentPending(false);
         setPendingBubble(null);
@@ -646,7 +645,7 @@ function VerificationConfig({
             <p className="text-[0.625rem] leading-relaxed text-muted-foreground">
               {execMode === "all"
                 ? "同时发给全部勾选的 Agent，最快拿到全部结果。"
-                : "由模型识别消息意图，分发给最合适的一个 Agent。"}
+                : "由模型识别意图，一个问题只分发给最合适的那个 Agent 执行。"}
             </p>
           </div>
         )}
