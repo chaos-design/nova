@@ -153,7 +153,12 @@ export function useConverse() {
 
   /** 发送一条用户消息：乐观落台 + 服务端流式驱动回复（可与其他 Agent 并行） */
   const send = useCallback(
-    async (agentId: string, text: string, overrides?: ConverseOverrides) => {
+    async (
+      agentId: string,
+      text: string,
+      overrides?: ConverseOverrides,
+      systemPrompt?: string,
+    ) => {
       const userMessage = text.trim();
       if (!userMessage) return;
       // 同一 Agent 不叠发；不同 Agent 之间互不影响，可并行验证
@@ -193,6 +198,7 @@ export function useConverse() {
             history,
             userMessage,
             overrides,
+            systemPrompt,
           }),
           signal: controller.signal,
         });

@@ -9,6 +9,7 @@ import {
   ChevronDown,
   CircleCheck,
   CircleHelp,
+  FileText,
   LoaderCircle,
   Pencil,
   Plus,
@@ -18,6 +19,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PageHeader } from "@/components/layout/page-header";
 import { LogStream } from "@/components/nova/log-stream";
 import { MarkdownText } from "@/components/nova/markdown-text";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +49,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Tooltip,
@@ -82,6 +92,10 @@ const ENV_PROFILE_ID = "__env__";
 const PROFILES_STORAGE_KEY = "nova:converse:profiles";
 const ACTIVE_PROFILE_KEY = "nova:converse:active-profile";
 const EXEC_MODE_KEY = "nova:converse:exec-mode";
+/** 自定义系统提示词的 localStorage 键；空 = 使用 NOVA 内置默认 */
+const SYSTEM_PROMPT_KEY = "nova:converse:system-prompt";
+/** 服务端对系统提示词的长度上限（route 侧会再截断一次） */
+const SYSTEM_PROMPT_LIMIT = 8_000;
 /** 旧版单配置键：读到时迁移为一条档案后废弃 */
 const LEGACY_OVERRIDES_KEY = "nova:converse:agent-overrides";
 
@@ -218,6 +232,12 @@ export function ConverseLab({
     node.scrollTop = node.scrollHeight;
   }, [turns.length, lastLogCount, lastTurn?.status]);
 
+  // 挂起的气泡在对应验证轮创建后撤下；turns.length 只是触发器
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 回调不消费依赖
+  useEffect(() => {
+    setPendingBubble(null);
+  }, [turns.length]);
+
   // 连接配置档案：首帧与 SSR 一致（内置 .env 默认），挂载后再读 localStorage，
   // 避免 hydration 不一致
   const [profiles, setProfiles] = useState<AgentConnectionProfile[]>([]);
@@ -246,6 +266,28 @@ export function ConverseLab({
       window.localStorage.setItem(EXEC_MODE_KEY, mode);
     } catch {
       // 写不进去只影响下次打开
+    }
+  };
+
+  // 自定义系统提示词：页头抽屉编辑，空 = 内置默认
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [promptOpen, setPromptOpen] = useState(false);
+  // 意图分发时消息先以气泡展示，识别完成后再创建验证轮
+  const [pendingBubble, setPendingBubble] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      setSystemPrompt(window.localStorage.getItem(SYSTEM_PROMPT_KEY) ?? "");
+    } catch {
+      // 读不到保持默认
+    }
+  }, []);
+  const saveSystemPrompt = (prompt: string) => {
+    setSystemPrompt(prompt);
+    try {
+      if (prompt) window.localStorage.setItem(SYSTEM_PROMPT_KEY, prompt);
+      else window.localStorage.removeItem(SYSTEM_PROMPT_KEY);
+    } catch {
+      // 写不进去只影响本次会话
     }
   };
 
@@ -315,14 +357,17 @@ export function ConverseLab({
   // 按意图选出最合适的一个，分类失败退化为广播，保证消息不丢
   const quickSend = (text: string) => {
     if (selectedAgents.length === 0) return;
+    const promptArg = systemPrompt.trim() || undefined;
     if (execMode === "all" || selectedAgents.length === 1) {
       for (const item of selectedAgents) {
-        void converse.send(item.id, text, overrides);
+        void converse.send(item.id, text, overrides, promptArg);
       }
       return;
     }
     void (async () => {
       setIntentPending(true);
+      // 消息先以气泡展示在内容区，识别完成后才创建验证轮
+      setPendingBubble(text);
       try {
         const response = await fetch("/api/agents/intent", {
           method: "POST",
@@ -341,14 +386,15 @@ export function ConverseLab({
           ? selectedAgents.find((item) => item.id === body.agentId)
           : undefined;
         for (const item of hit ? [hit] : selectedAgents) {
-          void converse.send(item.id, text, overrides);
+          void converse.send(item.id, text, overrides, promptArg);
         }
       } catch {
         for (const item of selectedAgents) {
-          void converse.send(item.id, text, overrides);
+          void converse.send(item.id, text, overrides, promptArg);
         }
       } finally {
         setIntentPending(false);
+        setPendingBubble(null);
       }
     })();
   };
@@ -360,97 +406,133 @@ export function ConverseLab({
   };
 
   return (
-    // 高度扣掉顶栏、页头与页脚：内容区撑满剩余视口，内部各自滚动
-    <div className="grid items-start gap-4 xl:h-[calc(100dvh-14.75rem)] xl:min-h-[36rem] xl:grid-cols-[19rem_minmax(0,1fr)]">
-      {/* 旁置模块：配置 / 用例 / 口径 */}
-      <aside className="space-y-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1">
-        <VerificationConfig
-          localAgents={localAgents}
-          agents={agents}
-          targetIds={targetIds}
-          onToggleAgent={(id) => {
-            setTargetIds((prev) => {
-              // 至少保留一个目标：最后一个不可取消
-              if (prev.includes(id) && prev.length === 1) return prev;
-              return prev.includes(id)
-                ? prev.filter((item) => item !== id)
-                : [...prev, id];
-            });
-          }}
-          execMode={execMode}
-          onExecModeChange={setExecMode}
-        />
-        <VerificationCases
-          completed={totals.completedTurns}
-          sending={sending}
-          disabled={selectedAgents.length === 0}
-          onPick={quickSend}
-        />
+    <div className="space-y-5">
+      <PageHeader
+        eyebrow="Converse Lab"
+        title="对话验证"
+        subtitle="从左侧验证用例发起或自定义输入，每轮生成一张验证卡：Agent 回复、工具调用、注入判定与 token 成本全部来自服务端真实执行，读不到就如实显示「尚未执行」，没有 mock 回复。"
+        actions={
+          <>
+            <ConverseScopeHint />
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="系统提示词配置"
+              onClick={() => setPromptOpen(true)}
+              className="size-8"
+            >
+              <FileText className="size-4" />
+            </Button>
+          </>
+        }
+      />
 
-        {/* 模型配置管理弹窗：新增 / 编辑 / 删除 / 切换连接档案 */}
-        <AgentConfigDialog
-          open={editorOpen}
-          onOpenChange={setEditorOpen}
-          entry={localEntry ?? null}
-          profiles={profiles}
-          activeProfileId={activeProfileId}
-          onSelect={selectProfile}
-          onSave={saveProfile}
-          onDelete={deleteProfile}
-        />
-      </aside>
-
-      {/* 主栏：会话累计条 + 验证记录流（独立滚动）+ 沉底输入区 */}
-      <div className="flex min-w-0 flex-col gap-4 xl:h-full xl:min-h-0">
-        <SessionStrip
-          agentNames={selectedAgents.map((item) => item.name)}
-          totals={totals}
-          runningCount={runningCount}
-          onReset={() => {
-            for (const id of targetIds) converse.reset(id);
-          }}
-        />
-
-        <div
-          ref={feedRef}
-          data-nova-feed
-          className="min-h-0 flex-1 space-y-4 xl:overflow-y-auto xl:pr-1"
-        >
-          {turns.length === 0 ? (
-            <EmptyVerification />
-          ) : (
-            turns.map((turn, index) => (
-              <VerificationCard
-                key={turn.id}
-                turn={turn}
-                agentName={agentNameOf(turn.agentId)}
-                index={index + 1}
-                isLast={index === turns.length - 1}
-              />
-            ))
-          )}
-        </div>
-
-        <div className="shrink-0">
-          <DraftComposer
-            draft={draft}
-            onDraftChange={setDraft}
-            onSubmit={submitDraft}
-            runningCount={runningCount}
-            targetCount={selectedAgents.length}
-            intentPending={intentPending}
-            onStop={() => {
-              for (const id of targetIds) converse.stop(id);
+      {/* 高度扣掉顶栏、页头与页脚：内容区撑满剩余视口，内部各自滚动 */}
+      <div className="grid items-start gap-4 xl:h-[calc(100dvh-14.75rem)] xl:min-h-[36rem] xl:grid-cols-[19rem_minmax(0,1fr)]">
+        {/* 旁置模块：配置 / 用例 / 口径 */}
+        <aside className="space-y-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1">
+          <VerificationConfig
+            localAgents={localAgents}
+            agents={agents}
+            targetIds={targetIds}
+            onToggleAgent={(id) => {
+              setTargetIds((prev) => {
+                // 至少保留一个目标：最后一个不可取消
+                if (prev.includes(id) && prev.length === 1) return prev;
+                return prev.includes(id)
+                  ? prev.filter((item) => item !== id)
+                  : [...prev, id];
+              });
             }}
-            hasAgent={selectedAgents.length > 0}
-            profiles={allProfiles}
-            activeProfileId={activeProfileId}
-            onSelectProfile={selectProfile}
-            onOpenConfig={() => setEditorOpen(true)}
-            onQuickCase={quickSend}
+            execMode={execMode}
+            onExecModeChange={setExecMode}
           />
+          <VerificationCases
+            completed={totals.completedTurns}
+            sending={sending}
+            disabled={selectedAgents.length === 0}
+            onPick={quickSend}
+          />
+
+          {/* 模型配置管理弹窗：新增 / 编辑 / 删除 / 切换连接档案 */}
+          <AgentConfigDialog
+            open={editorOpen}
+            onOpenChange={setEditorOpen}
+            entry={localEntry ?? null}
+            profiles={profiles}
+            activeProfileId={activeProfileId}
+            onSelect={selectProfile}
+            onSave={saveProfile}
+            onDelete={deleteProfile}
+          />
+        </aside>
+
+        {/* 主栏：会话累计条 + 验证记录流（独立滚动）+ 沉底输入区 */}
+        <div className="flex min-w-0 flex-col gap-4 xl:h-full xl:min-h-0">
+          <SessionStrip
+            agentNames={selectedAgents.map((item) => item.name)}
+            totals={totals}
+            runningCount={runningCount}
+            onReset={() => {
+              for (const id of targetIds) converse.reset(id);
+            }}
+          />
+
+          <div
+            ref={feedRef}
+            data-nova-feed
+            className="min-h-0 flex-1 overflow-y-auto"
+          >
+            {turns.length === 0 && !pendingBubble ? (
+              <EmptyVerification />
+            ) : (
+              <div className="space-y-5 pr-1 pb-1">
+                {turns.map((turn, index) => (
+                  <div key={turn.id} className="space-y-2">
+                    {/* 用户消息先展示：气泡独立于验证卡 */}
+                    <UserBubble text={turn.userText} />
+                    <VerificationCard
+                      turn={turn}
+                      agentName={agentNameOf(turn.agentId)}
+                      index={index + 1}
+                      isLast={index === turns.length - 1}
+                    />
+                  </div>
+                ))}
+                {pendingBubble && <UserBubble text={pendingBubble} pending />}
+              </div>
+            )}
+          </div>
+
+          <div className="shrink-0">
+            <DraftComposer
+              draft={draft}
+              onDraftChange={setDraft}
+              onSubmit={submitDraft}
+              runningCount={runningCount}
+              targetCount={selectedAgents.length}
+              intentPending={intentPending}
+              onStop={() => {
+                for (const id of targetIds) converse.stop(id);
+              }}
+              hasAgent={selectedAgents.length > 0}
+              profiles={allProfiles}
+              activeProfileId={activeProfileId}
+              onSelectProfile={selectProfile}
+              onOpenConfig={() => setEditorOpen(true)}
+              onQuickCase={quickSend}
+            />
+          </div>
         </div>
       </div>
+
+      {/* 系统提示词抽屉 */}
+      <PromptConfigDrawer
+        open={promptOpen}
+        onOpenChange={setPromptOpen}
+        value={systemPrompt}
+        onSave={saveSystemPrompt}
+      />
     </div>
   );
 }
@@ -1124,6 +1206,25 @@ function SessionMetric({
 /* 主栏：验证记录卡                                                            */
 /* -------------------------------------------------------------------------- */
 
+/** 用户消息气泡：右对齐，先于验证卡展示（发送即出现） */
+function UserBubble({ text, pending }: { text: string; pending?: boolean }) {
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[85%] rounded-2xl rounded-br-md border border-nova-accent/25 bg-nova-accent/10 px-3.5 py-2 text-sm leading-relaxed whitespace-pre-wrap">
+        {text}
+        {pending && (
+          <span
+            aria-hidden="true"
+            className="ml-1 inline-block animate-pulse text-nova-accent"
+          >
+            ▍
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** 空态：引导用户从左侧用例发起第一轮验证 */
 function EmptyVerification() {
   return (
@@ -1198,17 +1299,7 @@ const VerificationCard = memo(function VerificationCard({
           )}
         </div>
 
-        {/* 验证输入 */}
-        <div className="rounded-lg border border-nova-accent/20 bg-nova-accent/6 px-3 py-2">
-          <p className="nova-mono-label text-[0.625rem] text-nova-accent/80">
-            验证输入
-          </p>
-          <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed">
-            {turn.userText}
-          </p>
-        </div>
-
-        {/* 思考与执行过程（thinking 式：前置于回复，落定后自动收起） */}
+        {/* 思考与执行过程（thinking 式：前置于回复） */}
         <div className="overflow-hidden rounded-lg border border-white/8 bg-white/2">
           <button
             type="button"
@@ -1830,5 +1921,89 @@ export function ConverseScopeHint() {
         </p>
       </HoverCardContent>
     </HoverCard>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* 页头：系统提示词抽屉                                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 系统提示词配置抽屉：编辑随每轮请求透传的 systemPrompt。
+ * 空 = 使用 NOVA 内置默认提示词；保存在浏览器 localStorage。
+ */
+function PromptConfigDrawer({
+  open,
+  onOpenChange,
+  value,
+  onSave,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  value: string;
+  onSave: (prompt: string) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  useEffect(() => {
+    if (open) setDraft(value);
+  }, [open, value]);
+
+  const overLimit = draft.length > SYSTEM_PROMPT_LIMIT;
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="flex w-[28rem] flex-col gap-0 sm:max-w-[28rem]"
+      >
+        <SheetHeader className="border-b border-white/8 px-4 pt-4 pb-3">
+          <SheetTitle className="text-base">系统提示词</SheetTitle>
+          <SheetDescription className="text-xs leading-relaxed">
+            留空使用 NOVA 内置默认提示词；内容随每轮请求透传，服务端校验后
+            仅在当次生效。
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="flex-1 overflow-y-auto p-4">
+          <Textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            rows={18}
+            placeholder="自定义系统提示词…"
+            className="min-h-96 resize-none font-mono text-xs"
+          />
+          <p
+            className={cn(
+              "mt-2 text-right font-mono text-[0.625rem]",
+              overLimit ? "text-nova-rose" : "text-muted-foreground/70",
+            )}
+          >
+            {draft.length}/{SYSTEM_PROMPT_LIMIT}
+          </p>
+        </div>
+
+        <SheetFooter className="gap-2 border-t border-white/8 px-4 py-3">
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs"
+            onClick={() => setDraft("")}
+          >
+            恢复默认
+          </Button>
+          <Button
+            size="sm"
+            className="text-xs"
+            disabled={overLimit}
+            onClick={() => {
+              onSave(draft.trim() ? draft : "");
+              onOpenChange(false);
+            }}
+          >
+            保存
+          </Button>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
