@@ -2,6 +2,7 @@
 
 import { cn } from "cn";
 import {
+  BrainCircuit,
   ChevronDown,
   CircleCheck,
   LoaderCircle,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { LogStream } from "@/components/nova/log-stream";
+import { MarkdownText } from "@/components/nova/markdown-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -532,7 +534,7 @@ function EmptyVerification() {
   );
 }
 
-/** 一轮验证 = 一张卡：判定行、回复、工具调用、可折叠事件流 */
+/** 一轮验证 = 一张卡：判定行、thinking 式过程块、读数、md 渲染的回复 */
 function VerificationCard({
   turn,
   index,
@@ -542,23 +544,38 @@ function VerificationCard({
   index: number;
   isLast: boolean;
 }) {
-  // 最新轮与失败轮默认展开事件流；更早的轮默认收起
-  const [open, setOpen] = useState(
+  // thinking 块：执行中默认展开、落定后自动收起（失败轮保留，要看出什么事）
+  const [thinkingOpen, setThinkingOpen] = useState(
     turn.status === "running" || turn.status === "failed",
   );
   const result = turn.result;
   const running = turn.status === "running";
 
-  // 新一轮开始后自动收起旧卡（失败轮保留展开：要看出什么事）
+  const prevStatusRef = useRef(turn.status);
+  useEffect(() => {
+    // 进入执行：展开；落定为完成：收起，让回复成为主体
+    if (prevStatusRef.current !== "running" && turn.status === "running") {
+      setThinkingOpen(true);
+    }
+    if (
+      prevStatusRef.current === "running" &&
+      (turn.status === "completed" || turn.status === "stopped")
+    ) {
+      setThinkingOpen(false);
+    }
+    prevStatusRef.current = turn.status;
+  }, [turn.status]);
+
+  // 新一轮开始后自动收起旧卡的过程块（失败轮保留展开：要看出什么事）
   const prevIsLastRef = useRef(isLast);
   useEffect(() => {
     if (prevIsLastRef.current && !isLast && turn.status !== "failed") {
-      setOpen(false);
+      setThinkingOpen(false);
     }
     prevIsLastRef.current = isLast;
   }, [isLast, turn.status]);
 
-  // 执行中把最新一步亮出来：不用翻事件流就能看到 Agent 正在做什么
+  // 执行中把最新一步亮出来：不用展开过程块也能看到 Agent 正在做什么
   const latestStep = running ? turn.logs.at(-1) : undefined;
 
   return (
@@ -608,28 +625,62 @@ function VerificationCard({
           </p>
         </div>
 
-        {/* 执行中：最新步骤实时可见 + 读数占位骨架 */}
-        {running && (
-          <div className="space-y-1.5 rounded-lg border border-nova-accent/25 bg-nova-accent/6 px-3 py-2.5">
-            <div className="flex items-center gap-2">
+        {/* 思考与执行过程（thinking 式：前置于回复，落定后自动收起） */}
+        <div className="overflow-hidden rounded-lg border border-white/8 bg-white/2">
+          <button
+            type="button"
+            onClick={() => setThinkingOpen(!thinkingOpen)}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/3"
+          >
+            {running ? (
               <LoaderCircle className="size-3.5 animate-spin text-nova-cyan" />
-              <span className="font-mono text-xs text-nova-cyan">
-                Agent 执行中 · 已回传 {turn.logs.length} 条事件
-              </span>
-            </div>
-            {latestStep && (
-              <p className="pl-5 text-xs leading-relaxed text-muted-foreground">
-                <span className="nova-mono-label mr-1.5 text-nova-accent/70">
-                  #{latestStep.step}
-                </span>
-                {latestStep.message}
-              </p>
+            ) : (
+              <BrainCircuit className="size-3.5 text-muted-foreground" />
             )}
-            <div className="space-y-1.5 pl-5" aria-hidden="true">
-              <div className="nova-pulse h-2 w-3/5 rounded bg-white/8" />
-              <div className="nova-pulse h-2 w-4/5 rounded bg-white/8" />
-              <div className="nova-pulse h-2 w-2/5 rounded bg-white/8" />
+            <span
+              className={cn(
+                "text-xs font-medium",
+                running ? "text-nova-cyan" : "text-muted-foreground",
+              )}
+            >
+              思考与执行过程
+            </span>
+            <span className="nova-mono-label text-[0.625rem] text-muted-foreground/70">
+              {turn.logs.length} 条事件
+            </span>
+            <ChevronDown
+              className={cn(
+                "ml-auto size-3 text-muted-foreground/70 transition-transform",
+                thinkingOpen && "rotate-180",
+              )}
+            />
+          </button>
+
+          {thinkingOpen && (
+            <div className="border-t border-white/8 px-3 py-2">
+              {running && latestStep && (
+                <p className="nova-pulse mb-2 text-xs leading-relaxed text-muted-foreground">
+                  <span className="nova-mono-label mr-1.5 text-nova-accent/70">
+                    #{latestStep.step}
+                  </span>
+                  {latestStep.message}
+                </p>
+              )}
+              <LogStream
+                logs={turn.logs}
+                className="h-44"
+                emptyHint="等待事件…"
+              />
             </div>
+          )}
+        </div>
+
+        {/* 回复占位骨架：thinking 之下、回复落地之前 */}
+        {running && (
+          <div className="space-y-1.5 px-1" aria-hidden="true">
+            <div className="nova-pulse h-2 w-3/5 rounded bg-white/8" />
+            <div className="nova-pulse h-2 w-4/5 rounded bg-white/8" />
+            <div className="nova-pulse h-2 w-2/5 rounded bg-white/8" />
           </div>
         )}
 
@@ -673,7 +724,7 @@ function VerificationCard({
                 <p className="nova-mono-label text-[0.625rem] text-nova-cyan/80">
                   Agent 回复
                 </p>
-                <div className="mt-1 text-sm leading-relaxed text-foreground/95">
+                <div className="mt-1 text-foreground/95">
                   <TypewriterText text={result.content} animate={isLast} />
                 </div>
               </div>
@@ -725,26 +776,6 @@ function VerificationCard({
               </div>
             )}
           </>
-        )}
-
-        {/* 事件流折叠 */}
-        <button
-          type="button"
-          onClick={() => setOpen(!open)}
-          className="nova-mono-label flex items-center gap-1 text-muted-foreground/70 transition-colors hover:text-foreground"
-        >
-          <ChevronDown
-            className={cn("size-3 transition-transform", open && "rotate-180")}
-          />
-          本轮事件流（{turn.logs.length}）
-        </button>
-
-        {open && (
-          <LogStream
-            logs={turn.logs}
-            className="h-48 rounded-lg border border-white/8"
-            emptyHint="等待事件…"
-          />
         )}
       </CardContent>
     </Card>
@@ -804,7 +835,8 @@ function DraftComposer({
 }) {
   return (
     <Card>
-      <CardContent className="flex items-end gap-2 p-3">
+      {/* 参考对话式 IDE 的输入卡：无边框输入在上，工具行在下，发送钮贴右 */}
+      <CardContent className="p-2.5">
         <Textarea
           value={draft}
           onChange={(event) => onDraftChange(event.target.value)}
@@ -817,46 +849,64 @@ function DraftComposer({
           rows={2}
           placeholder={
             hasAgent
-              ? "自定义验证输入：告诉 Agent 你想让它做什么…（⌘/Ctrl + Enter 发送）"
+              ? "自定义验证输入：告诉 Agent 你想让它做什么…"
               : "先在左侧「验证配置」选择一个目标 Agent"
           }
-          className="min-w-0 flex-1 resize-none text-sm"
+          className="min-w-0 resize-none border-none bg-transparent px-1.5 py-1 text-sm shadow-none focus-visible:ring-0"
           // 执行中不锁输入：可以先写好下一条，结束后直接发
           disabled={!hasAgent}
         />
-        {sending ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="icon"
-                aria-label="中止执行"
-                onClick={onStop}
-                className="size-8 shrink-0 border-nova-rose/40 text-nova-rose transition-all hover:bg-nova-rose/12 hover:text-nova-rose active:scale-95"
-              >
-                <LoaderCircle className="animate-spin" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="top">中止执行</TooltipContent>
-          </Tooltip>
-        ) : (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                size="icon"
-                aria-label="发起验证"
-                onClick={onSubmit}
-                disabled={!hasAgent || draft.trim().length === 0}
-                className="size-8 shrink-0 border border-nova-accent/40 bg-nova-accent/15 text-nova-accent transition-all hover:bg-nova-accent/25 hover:shadow-[0_0_18px_color-mix(in_oklab,var(--nova-accent)_35%,transparent)] active:scale-95 disabled:pointer-events-none disabled:opacity-40"
-              >
-                <Send />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              发起验证（⌘/Ctrl + Enter）
-            </TooltipContent>
-          </Tooltip>
-        )}
+
+        <div className="mt-1 flex items-center gap-2 px-0.5 pb-0.5">
+          <div className="mr-auto flex min-w-0 items-center gap-2">
+            {sending ? (
+              <>
+                <LoaderCircle className="size-3.5 animate-spin text-nova-cyan" />
+                <span className="font-mono text-[0.6875rem] text-nova-cyan">
+                  验证执行中…
+                </span>
+              </>
+            ) : (
+              <span className="truncate text-[0.625rem] text-muted-foreground/70">
+                工具由 NOVA 代执行 · ⌘/Ctrl + Enter 发送
+              </span>
+            )}
+          </div>
+
+          {sending ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="中止执行"
+                  onClick={onStop}
+                  className="size-9 shrink-0 rounded-lg border-nova-rose/40 text-nova-rose transition-all hover:bg-nova-rose/12 hover:text-nova-rose active:scale-95"
+                >
+                  <Square />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">中止执行</TooltipContent>
+            </Tooltip>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  aria-label="发起验证"
+                  onClick={onSubmit}
+                  disabled={!hasAgent || draft.trim().length === 0}
+                  className="size-9 shrink-0 rounded-lg border border-nova-accent/40 bg-nova-accent/15 text-nova-accent transition-all hover:bg-nova-accent/25 hover:shadow-[0_0_18px_color-mix(in_oklab,var(--nova-accent)_35%,transparent)] active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <Send />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                发起验证（⌘/Ctrl + Enter）
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -881,7 +931,8 @@ function CardHeaderBlock({ title, hint }: { title: string; hint: string }) {
  *
  * 只在刚完成的最新轮挂载时逐字显现（`animate` 由调用方用 isLast 控制），
  * 历史轮与系统开启减少动效时直接完整显示。显现过程中跟随滚动记录流，
- * 保证正在打出的内容始终可见。
+ * 保证正在打出的内容始终可见。已显现的部分按 markdown 实时渲染，
+ * 因此标题、列表、链接在打字过程中即呈现最终排版。
  */
 function TypewriterText({ text, animate }: { text: string; animate: boolean }) {
   const [shown, setShown] = useState(animate ? 0 : text.length);
@@ -908,8 +959,8 @@ function TypewriterText({ text, animate }: { text: string; animate: boolean }) {
   }, [done, text.length]);
 
   return (
-    <p className="whitespace-pre-wrap">
-      {text.slice(0, shown)}
+    <div>
+      <MarkdownText text={text.slice(0, shown)} />
       {!done && (
         <span
           aria-hidden="true"
@@ -918,7 +969,7 @@ function TypewriterText({ text, animate }: { text: string; animate: boolean }) {
           ▍
         </span>
       )}
-    </p>
+    </div>
   );
 }
 
