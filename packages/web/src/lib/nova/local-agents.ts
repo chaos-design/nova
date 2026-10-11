@@ -76,6 +76,21 @@ export const LOCAL_AGENTS: readonly LocalAgentEntry[] = [
       "外部 OpenAI 兼容大模型端点：端点、模型与密钥全部来自仓库根 .env（NOVA_LLM_*）",
     registeredAt: "2026-10-11T00:00:00.000Z",
   },
+  {
+    // 第二个可验证目标：同端点下的 2.5 系模型，用于多 Agent 对照验证。
+    // 与 AGNES-FLASH 共享端点与密钥，只有模型 id 不同。
+    id: "agt-local-agnes-25",
+    name: "AGNES-2.5",
+    codename: "真实大模型",
+    model: "agnes-2.5-flash",
+    owner: "本地开发",
+    version: "v1.0.0",
+    endpoint:
+      process.env.NOVA_LLM_BASE_URL?.trim() || "https://apihub.agnes-ai.com/v1",
+    apiKeyEnv: "NOVA_LLM_API_KEY",
+    tagline: "同端点的 2.5 系模型：与 AGNES-FLASH 并行对话验证做横向对照",
+    registeredAt: "2026-10-11T00:00:00.000Z",
+  },
 ];
 
 /** 按 id 查本地 Agent，找不到返回 undefined（不抛错：登记是可选注入） */

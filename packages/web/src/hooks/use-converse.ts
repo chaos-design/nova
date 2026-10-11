@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type ConverseChatMessage,
   type ConverseEvent,
@@ -24,7 +24,7 @@ export interface ConverseTurn {
   error: { message: string; hint?: string } | null;
 }
 
-/** 会话级累计观测 */
+/** 会话级累计观测（按 Agent 分别计算） */
 export interface ConverseSessionTotals {
   turns: number;
   completedTurns: number;
@@ -34,31 +34,35 @@ export interface ConverseSessionTotals {
 }
 
 /**
- * 对话验证状态机。
+ * 多 Agent 对话验证状态机。
  *
- * 通过 `POST /api/agents/converse` 消费 SSE 流驱动：服务端真实执行、
- * 逐帧回传事件，客户端只做乐观渲染与中止。
+ * 会话按 agentId 分桶：每个 Agent 一条独立会话，切换目标不丢历史，
+ * 「清空会话」只清当前 Agent。流式执行按 Agent 各自持有
+ * AbortController，因此可以**并行**验证多个 Agent 而互不取消；
+ * 同一 Agent 的上一轮没跑完时不叠发（SSE 流是单条的）。
  *
  * 历史只由**成功完成的轮次**拼出：失败轮不确定是否被 Agent 读到，
  * 拼进去会让"没送达的话"参与下一轮决策。
  */
 export function useConverse() {
-  const [turns, setTurns] = useState<ConverseTurn[]>([]);
+  const [sessions, setSessions] = useState<Record<string, ConverseTurn[]>>({});
 
-  const abortRef = useRef<AbortController | null>(null);
-  const startedAtRef = useRef(0);
+  /** 每个 Agent 一条流；键为 agentId */
+  const abortMapRef = useRef<Map<string, AbortController>>(new Map());
+  const startedAtRef = useRef<Map<string, number>>(new Map());
   const turnSeqRef = useRef(0);
-  const turnsRef = useRef<ConverseTurn[]>([]);
-
+  const sessionsRef = useRef(sessions);
   useEffect(() => {
-    turnsRef.current = turns;
-  }, [turns]);
+    sessionsRef.current = sessions;
+  }, [sessions]);
 
-  // 离开对话页时中止进行中的轮次：真实执行器可能还在流式消耗模型 token
+  // 离开页面时中止所有在跑的流：真实执行器可能还在消耗模型 token
   useEffect(
     () => () => {
-      abortRef.current?.abort();
-      abortRef.current = null;
+      for (const controller of abortMapRef.current.values()) {
+        controller.abort();
+      }
+      abortMapRef.current.clear();
     },
     [],
   );
@@ -78,29 +82,36 @@ export function useConverse() {
   );
 
   const patchTurn = useCallback(
-    (turnId: string, updater: (turn: ConverseTurn) => ConverseTurn) => {
-      setTurns((prev) =>
-        prev.map((turn) => (turn.id === turnId ? updater(turn) : turn)),
-      );
+    (
+      agentId: string,
+      turnId: string,
+      updater: (turn: ConverseTurn) => ConverseTurn,
+    ) => {
+      setSessions((prev) => ({
+        ...prev,
+        [agentId]: (prev[agentId] ?? []).map((turn) =>
+          turn.id === turnId ? updater(turn) : turn,
+        ),
+      }));
     },
     [],
   );
 
   /** 事件 → 单轮状态；未知类型走兜底置 failed（服务端与客户端版本不一致时） */
   const consumeEvent = useCallback(
-    (turnId: string, event: ConverseEvent) => {
+    (agentId: string, turnId: string, event: ConverseEvent) => {
       switch (event.type) {
         case "meta":
           break;
 
         case "step":
-          patchTurn(turnId, (turn) => ({
+          patchTurn(agentId, turnId, (turn) => ({
             ...turn,
             logs: [
               ...turn.logs,
               stepToConverseLog(
                 event.step,
-                Date.now() - startedAtRef.current,
+                Date.now() - (startedAtRef.current.get(agentId) ?? Date.now()),
                 turnId,
               ),
             ],
@@ -108,7 +119,7 @@ export function useConverse() {
           break;
 
         case "turn":
-          patchTurn(turnId, (turn) => ({
+          patchTurn(agentId, turnId, (turn) => ({
             ...turn,
             status: "completed",
             result: event.turn,
@@ -116,7 +127,7 @@ export function useConverse() {
           break;
 
         case "error":
-          patchTurn(turnId, (turn) => ({
+          patchTurn(agentId, turnId, (turn) => ({
             ...turn,
             status: "failed",
             error: { message: event.message, hint: event.hint },
@@ -125,7 +136,7 @@ export function useConverse() {
 
         default: {
           const unknown = event as { type?: string };
-          patchTurn(turnId, (turn) => ({
+          patchTurn(agentId, turnId, (turn) => ({
             ...turn,
             status: "failed",
             error: { message: `收到未知事件类型：${unknown.type ?? "?"}` },
@@ -136,32 +147,36 @@ export function useConverse() {
     [patchTurn],
   );
 
-  /** 发送一条用户消息：乐观落台 + 服务端流式驱动回复；overrides 为可视化配置覆盖 */
+  /** 发送一条用户消息：乐观落台 + 服务端流式驱动回复（可与其他 Agent 并行） */
   const send = useCallback(
     async (agentId: string, text: string, overrides?: ConverseOverrides) => {
       const userMessage = text.trim();
-      // 上一轮还在跑时不叠发：SSE 流是单条的，叠发只会互相取消
-      if (!userMessage || abortRef.current !== null) return;
+      if (!userMessage) return;
+      // 同一 Agent 不叠发；不同 Agent 之间互不影响，可并行验证
+      if (abortMapRef.current.has(agentId)) return;
 
       const controller = new AbortController();
-      abortRef.current = controller;
-      startedAtRef.current = Date.now();
+      abortMapRef.current.set(agentId, controller);
+      startedAtRef.current.set(agentId, Date.now());
       turnSeqRef.current += 1;
-      const turnId = `turn-${turnSeqRef.current}`;
+      const turnId = `turn-${agentId}-${turnSeqRef.current}`;
 
-      const history = buildHistory(turnsRef.current);
+      const history = buildHistory(sessionsRef.current[agentId] ?? []);
 
-      setTurns((prev) => [
+      setSessions((prev) => ({
         ...prev,
-        {
-          id: turnId,
-          userText: userMessage,
-          status: "running",
-          logs: [],
-          result: null,
-          error: null,
-        },
-      ]);
+        [agentId]: [
+          ...(prev[agentId] ?? []),
+          {
+            id: turnId,
+            userText: userMessage,
+            status: "running" as const,
+            logs: [],
+            result: null,
+            error: null,
+          },
+        ],
+      }));
 
       try {
         const response = await fetch("/api/agents/converse", {
@@ -182,7 +197,7 @@ export function useConverse() {
             hint?: string;
           } | null;
 
-          patchTurn(turnId, (turn) => ({
+          patchTurn(agentId, turnId, (turn) => ({
             ...turn,
             status: "failed",
             error: {
@@ -197,7 +212,7 @@ export function useConverse() {
           response.body,
           controller.signal,
           (event) => {
-            consumeEvent(turnId, event);
+            consumeEvent(agentId, turnId, event);
             // 结论或错误已落定：没有必要继续读到 EOF，立即断流省掉空转
             return event.type === "turn" || event.type === "error"
               ? "stop"
@@ -209,75 +224,79 @@ export function useConverse() {
         if (caught instanceof DOMException && caught.name === "AbortError") {
           return;
         }
-        patchTurn(turnId, (turn) => ({
+        patchTurn(agentId, turnId, (turn) => ({
           ...turn,
           status: "failed",
           error: { message: describe(caught) },
         }));
       } finally {
-        if (abortRef.current === controller) abortRef.current = null;
+        if (abortMapRef.current.get(agentId) === controller) {
+          abortMapRef.current.delete(agentId);
+        }
       }
     },
     [buildHistory, consumeEvent, patchTurn],
   );
 
-  /** 主动中止：服务端在下一个检查点退出；空闲时按下不做任何事 */
-  const stop = useCallback(() => {
-    if (abortRef.current === null) return;
-    abortRef.current.abort();
-    abortRef.current = null;
+  /** 中止指定 Agent 的在跑流；空闲时按下不做任何事 */
+  const stop = useCallback((agentId: string) => {
+    const controller = abortMapRef.current.get(agentId);
+    if (!controller) return;
+    controller.abort();
+    abortMapRef.current.delete(agentId);
     // 中止不是失败：单独成态，让界面能区分「跑完了」与「被手动停了」
-    setTurns((prev) =>
-      prev.map((turn) =>
-        turn.status === "running" ? { ...turn, status: "stopped" } : turn,
+    setSessions((prev) => ({
+      ...prev,
+      [agentId]: (prev[agentId] ?? []).map((turn) =>
+        turn.status === "running"
+          ? { ...turn, status: "stopped" as const }
+          : turn,
       ),
-    );
+    }));
   }, []);
 
-  /** 清空会话：下一轮的历史从头开始 */
-  const reset = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    turnSeqRef.current = 0;
-    setTurns([]);
-  }, []);
-
-  const sending = turns.some((turn) => turn.status === "running");
-
-  const sessionTotals = useMemo<ConverseSessionTotals>(() => {
-    let completedTurns = 0;
-    let totalTokens = 0;
-    let totalToolCalls = 0;
-    let injectionObeyed = false;
-
-    for (const turn of turns) {
-      if (turn.status !== "completed" || !turn.result) continue;
-      completedTurns += 1;
-      totalTokens += turn.result.usage.totalTokens;
-      totalToolCalls += turn.result.toolCalls.length;
-      if (turn.result.injectionObeyed) injectionObeyed = true;
+  /** 清空指定 Agent 的会话：下一轮的历史从头开始 */
+  const reset = useCallback((agentId: string) => {
+    const controller = abortMapRef.current.get(agentId);
+    if (controller) {
+      controller.abort();
+      abortMapRef.current.delete(agentId);
     }
+    setSessions((prev) => {
+      if (!(agentId in prev)) return prev;
+      const next = { ...prev };
+      delete next[agentId];
+      return next;
+    });
+  }, []);
 
-    return {
-      turns: turns.length,
-      completedTurns,
-      totalTokens,
-      totalToolCalls,
-      injectionObeyed,
-    };
-  }, [turns]);
+  return { sessions, send, stop, reset };
+}
 
-  return useMemo(
-    () => ({
-      turns,
-      sending,
-      sessionTotals,
-      send,
-      stop,
-      reset,
-    }),
-    [turns, sending, sessionTotals, send, stop, reset],
-  );
+/** 单 Agent 会话的累计读数；组件里按激活会话调用 */
+export function sessionTotalsOf(
+  turns: readonly ConverseTurn[],
+): ConverseSessionTotals {
+  let completedTurns = 0;
+  let totalTokens = 0;
+  let totalToolCalls = 0;
+  let injectionObeyed = false;
+
+  for (const turn of turns) {
+    if (turn.status !== "completed" || !turn.result) continue;
+    completedTurns += 1;
+    totalTokens += turn.result.usage.totalTokens;
+    totalToolCalls += turn.result.toolCalls.length;
+    if (turn.result.injectionObeyed) injectionObeyed = true;
+  }
+
+  return {
+    turns: turns.length,
+    completedTurns,
+    totalTokens,
+    totalToolCalls,
+    injectionObeyed,
+  };
 }
 
 /** 对话步 → 日志流条目；时间基准是本轮真实经过时间（与沙盒同一约定） */

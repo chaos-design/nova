@@ -16,7 +16,7 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { LogStream } from "@/components/nova/log-stream";
 import { MarkdownText } from "@/components/nova/markdown-text";
 import { Badge } from "@/components/ui/badge";
@@ -55,7 +55,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { type ConverseTurn, useConverse } from "@/hooks/use-converse";
+import {
+  type ConverseTurn,
+  sessionTotalsOf,
+  useConverse,
+} from "@/hooks/use-converse";
 import {
   type AgentProfile,
   type ConverseOverrides,
@@ -163,17 +167,22 @@ export function ConverseLab({
   const [draft, setDraft] = useState("");
 
   const converse = useConverse();
-  const { reset } = converse;
 
-  // 切换 Agent 即清空会话：历史上下文跨模型复用没有意义。
-  // prev-ref 守卫让两个依赖都在回调内被消费：首次挂载与 reset 引用抖动不误触发
-  const prevAgentIdRef = useRef(agentId);
-  useEffect(() => {
-    if (prevAgentIdRef.current !== agentId) {
-      prevAgentIdRef.current = agentId;
-      reset();
-    }
-  }, [agentId, reset]);
+  // 每个 Agent 一条独立会话：切换目标不丢历史，可来回对照验证
+  const turns = converse.sessions[agentId] ?? [];
+  const sending = turns.some((turn) => turn.status === "running");
+  const totals = useMemo(() => sessionTotalsOf(turns), [turns]);
+
+  // 并行验证可见性：其他 Agent 还有流在跑时给出提示
+  const otherRunningCount = useMemo(
+    () =>
+      Object.entries(converse.sessions).filter(
+        ([id, agentTurns]) =>
+          id !== agentId &&
+          agentTurns.some((turn) => turn.status === "running"),
+      ).length,
+    [converse.sessions, agentId],
+  );
 
   const localEntry = localAgents.find((item) => item.id === agentId);
   const agent =
@@ -181,19 +190,17 @@ export function ConverseLab({
       ? localAgentProfile(localEntry)
       : agents.find((item) => item.id === agentId)) ?? null;
 
-  const totals = converse.sessionTotals;
-
   // 验证记录流新增轮次 / 事件 / 结论时跟随到底部；容器只在 xl 断点滚动，
   // 其余断点页面整体滚动，这里赋值无害
   const feedRef = useRef<HTMLDivElement>(null);
-  const lastTurn = converse.turns.at(-1);
+  const lastTurn = turns.at(-1);
   const lastLogCount = lastTurn?.logs.length ?? 0;
   // biome-ignore lint/correctness/useExhaustiveDependencies: 触发器依赖，回调只操作 feedRef
   useEffect(() => {
     const node = feedRef.current;
     if (!node) return;
     node.scrollTop = node.scrollHeight;
-  }, [converse.turns.length, lastLogCount, lastTurn?.status]);
+  }, [turns.length, lastLogCount, lastTurn?.status]);
 
   // 连接配置档案：首帧与 SSR 一致（内置 .env 默认），挂载后再读 localStorage，
   // 避免 hydration 不一致
@@ -253,7 +260,7 @@ export function ConverseLab({
     // 新增或编辑后即激活：刚保存的配置就是用户想用的
     persistProfiles(next, profile.id);
     // 端点/模型变了，历史上下文没有意义
-    reset();
+    converse.reset(agentId);
   };
 
   const deleteProfile = (id: string) => {
@@ -265,17 +272,16 @@ export function ConverseLab({
 
   const selectProfile = (id: string) => {
     persistProfiles(profiles, id === ENV_PROFILE_ID ? null : id);
-    // 切换连接即清空会话：跨端点/模型的历史没有意义
-    reset();
+    // 切换连接即清空当前 Agent 的会话：跨端点/模型的历史没有意义
+    converse.reset(agentId);
   };
 
   const quickSend = (text: string) => {
-    if (agent && !converse.sending)
-      void converse.send(agent.id, text, overrides);
+    if (agent && !sending) void converse.send(agent.id, text, overrides);
   };
 
   const submitDraft = () => {
-    if (!agent || converse.sending || draft.trim().length === 0) return;
+    if (!agent || sending || draft.trim().length === 0) return;
     quickSend(draft);
     setDraft("");
   };
@@ -290,11 +296,11 @@ export function ConverseLab({
           agents={agents}
           agentId={agentId}
           onAgentChange={setAgentId}
-          sending={converse.sending}
+          sending={sending}
         />
         <VerificationCases
           completed={totals.completedTurns}
-          sending={converse.sending}
+          sending={sending}
           disabled={!agent}
           onPick={quickSend}
         />
@@ -318,8 +324,9 @@ export function ConverseLab({
         <SessionStrip
           agentName={agent?.name ?? null}
           totals={totals}
-          sending={converse.sending}
-          onReset={reset}
+          sending={sending}
+          otherRunningCount={otherRunningCount}
+          onReset={() => converse.reset(agentId)}
         />
 
         <div
@@ -327,15 +334,15 @@ export function ConverseLab({
           data-nova-feed
           className="min-h-0 flex-1 space-y-4 xl:overflow-y-auto xl:pr-1"
         >
-          {converse.turns.length === 0 ? (
+          {turns.length === 0 ? (
             <EmptyVerification />
           ) : (
-            converse.turns.map((turn, index) => (
+            turns.map((turn, index) => (
               <VerificationCard
                 key={turn.id}
                 turn={turn}
                 index={index + 1}
-                isLast={index === converse.turns.length - 1}
+                isLast={index === turns.length - 1}
               />
             ))
           )}
@@ -346,8 +353,8 @@ export function ConverseLab({
             draft={draft}
             onDraftChange={setDraft}
             onSubmit={submitDraft}
-            sending={converse.sending}
-            onStop={converse.stop}
+            sending={sending}
+            onStop={() => converse.stop(agentId)}
             hasAgent={agent !== null}
             profiles={allProfiles}
             activeProfileId={activeProfileId}
@@ -863,6 +870,7 @@ function SessionStrip({
   agentName,
   totals,
   sending,
+  otherRunningCount,
   onReset,
 }: {
   agentName: string | null;
@@ -874,6 +882,8 @@ function SessionStrip({
     injectionObeyed: boolean;
   };
   sending: boolean;
+  /** 其他 Agent 仍有流在跑的数量（并行验证可见性） */
+  otherRunningCount: number;
   onReset: () => void;
 }) {
   return (
@@ -883,6 +893,11 @@ function SessionStrip({
         <p className="mt-0.5 font-mono text-[0.6875rem] text-muted-foreground">
           {agentName ? `正在验证 ${agentName} · ` : ""}
           {totals.turns} 轮 · {totals.completedTurns} 轮完成
+          {otherRunningCount > 0 && (
+            <span className="ml-2 text-nova-cyan">
+              · 另有 {otherRunningCount} 个 Agent 并行执行中
+            </span>
+          )}
         </p>
       </div>
 
@@ -952,7 +967,7 @@ function EmptyVerification() {
 }
 
 /** 一轮验证 = 一张卡：判定行、thinking 式过程块、读数、md 渲染的回复 */
-function VerificationCard({
+const VerificationCard = memo(function VerificationCard({
   turn,
   index,
   isLast,
@@ -1197,7 +1212,7 @@ function VerificationCard({
       </CardContent>
     </Card>
   );
-}
+});
 
 function TurnStatusChip({ status }: { status: ConverseTurn["status"] }) {
   const config = {
@@ -1503,17 +1518,25 @@ function TypewriterText({ text, animate }: { text: string; animate: boolean }) {
       setShown(text.length);
       return;
     }
-    const id = setInterval(() => {
-      setShown((current) => {
-        const next = Math.min(current + 3, text.length);
-        // 打字过程中把记录流钉在底部，正在写出的内容不会被截断在视口外
-        document
-          .querySelector("[data-nova-feed]")
-          ?.scrollTo({ top: Number.MAX_SAFE_INTEGER });
-        return next;
-      });
-    }, 16);
-    return () => clearInterval(id);
+    // rAF 驱动：按真实经过时间匀速显现，后台标签页自动暂停（不烧 CPU），
+    // 每帧只做一次 setState，比固定 16ms 定时器更平滑且渲染次数更少
+    const CHARS_PER_SECOND = 180;
+    const startedAt = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const target = Math.min(
+        text.length,
+        Math.floor(((now - startedAt) / 1000) * CHARS_PER_SECOND),
+      );
+      setShown((current) => Math.max(current, target));
+      // 打字过程中把记录流钉在底部，正在写出的内容不会被截断在视口外
+      document
+        .querySelector("[data-nova-feed]")
+        ?.scrollTo({ top: Number.MAX_SAFE_INTEGER });
+      if (target < text.length) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, [done, text.length]);
 
   return (
