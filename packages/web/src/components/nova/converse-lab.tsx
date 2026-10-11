@@ -2,21 +2,32 @@
 
 import { cn } from "cn";
 import {
+  ArrowUp,
+  Box,
+  Brain,
   BrainCircuit,
   ChevronDown,
   CircleCheck,
   LoaderCircle,
+  Plus,
   RotateCcw,
-  Send,
   ShieldAlert,
   Square,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LogStream } from "@/components/nova/log-stream";
 import { MarkdownText } from "@/components/nova/markdown-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -154,6 +165,8 @@ export function ConverseLab({
   // 可视化配置：首帧与 SSR 一致（空覆盖 = 沿用 env 默认），挂载后再读 localStorage，
   // 避免 hydration 不一致
   const [overrides, setOverridesState] = useState<ConverseOverrides>({});
+  // 「连接配置」编辑器可由模型下拉里的入口打开
+  const [editorOpen, setEditorOpen] = useState(false);
   useEffect(() => {
     setOverridesState(loadStoredOverrides());
   }, []);
@@ -170,9 +183,13 @@ export function ConverseLab({
     }
   };
 
+  // 模型下拉与配置编辑器共享的生效值
+  const agentEntry = localAgents.find((item) => item.id === agentId);
+  const effectiveEndpoint = overrides.endpoint ?? agentEntry?.endpoint ?? "";
+
   return (
     // 高度扣掉顶栏、页头与页脚：内容区撑满剩余视口，内部各自滚动
-    <div className="grid items-start gap-4 xl:h-[calc(100dvh-16.5rem)] xl:min-h-[36rem] xl:grid-cols-[19rem_minmax(0,1fr)]">
+    <div className="grid items-start gap-4 xl:h-[calc(100dvh-16rem)] xl:min-h-[36rem] xl:grid-cols-[19rem_minmax(0,1fr)]">
       {/* 旁置模块：配置 / 用例 / 口径 */}
       <aside className="space-y-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1">
         <VerificationConfig
@@ -183,6 +200,8 @@ export function ConverseLab({
           sending={converse.sending}
           overrides={overrides}
           onOverridesChange={handleOverridesChange}
+          editorOpen={editorOpen}
+          onEditorOpenChange={setEditorOpen}
         />
         <VerificationCases
           completed={totals.completedTurns}
@@ -229,6 +248,14 @@ export function ConverseLab({
             sending={converse.sending}
             onStop={converse.stop}
             hasAgent={agent !== null}
+            endpoint={effectiveEndpoint}
+            apiKey={overrides.apiKey ?? ""}
+            model={agent?.model ?? ""}
+            onModelSelect={(id) =>
+              handleOverridesChange({ ...overrides, model: id })
+            }
+            onOpenConfig={() => setEditorOpen(true)}
+            onQuickCase={quickSend}
           />
         </div>
       </div>
@@ -248,6 +275,8 @@ function VerificationConfig({
   sending,
   overrides,
   onOverridesChange,
+  editorOpen,
+  onEditorOpenChange,
 }: {
   localAgents: readonly LocalAgentEntry[];
   agents: readonly AgentProfile[];
@@ -256,6 +285,9 @@ function VerificationConfig({
   sending: boolean;
   overrides: ConverseOverrides;
   onOverridesChange: (overrides: ConverseOverrides) => void;
+  /** 编辑器可由模型下拉入口远程打开，因此提为可控状态 */
+  editorOpen: boolean;
+  onEditorOpenChange: (open: boolean) => void;
 }) {
   const entry = localAgents.find((item) => item.id === agentId);
   const customized = Boolean(
@@ -294,6 +326,8 @@ function VerificationConfig({
             overrides={overrides}
             customized={customized}
             disabled={sending}
+            open={editorOpen}
+            onOpenChange={onEditorOpenChange}
             onOverridesChange={onOverridesChange}
           />
         )}
@@ -301,12 +335,6 @@ function VerificationConfig({
         <Separator />
 
         <ul className="space-y-1.5 text-[0.6875rem] leading-relaxed text-muted-foreground">
-          <li className="flex gap-1.5">
-            <span aria-hidden="true" className="text-nova-cyan">
-              ·
-            </span>
-            单轮最多 4 次模型调用，超出即判定预算耗尽。
-          </li>
           <li className="flex gap-1.5">
             <span aria-hidden="true" className="text-nova-cyan">
               ·
@@ -332,31 +360,36 @@ function VerificationConfig({
  *
  * 展示态读「覆盖值 ?? 登记默认」；编辑态只允许改覆盖值，
  * 保存进 localStorage 并在后续每轮请求里随 body 下发。
+ * 打开方式有二：本模块的「编辑配置」按钮、模型下拉里的「模型配置…」。
  */
 function ConfigEditor({
   entry,
   overrides,
   customized,
   disabled,
+  open,
+  onOpenChange,
   onOverridesChange,
 }: {
   entry: LocalAgentEntry;
   overrides: ConverseOverrides;
   customized: boolean;
   disabled: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onOverridesChange: (overrides: ConverseOverrides) => void;
 }) {
-  const [editing, setEditing] = useState(false);
   const [endpoint, setEndpoint] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
 
-  const openEditor = () => {
+  // 打开时预填当前生效值（含模型下拉远程打开的路径）
+  useEffect(() => {
+    if (!open) return;
     setEndpoint(overrides.endpoint ?? entry.endpoint);
     setModel(overrides.model ?? entry.model);
     setApiKey(overrides.apiKey ?? "");
-    setEditing(true);
-  };
+  }, [open, entry, overrides]);
 
   const save = () => {
     onOverridesChange({
@@ -364,10 +397,10 @@ function ConfigEditor({
       model: model.trim() || undefined,
       apiKey: apiKey.trim() || undefined,
     });
-    setEditing(false);
+    onOpenChange(false);
   };
 
-  if (editing) {
+  if (open) {
     return (
       <div className="space-y-2.5 rounded-lg border border-nova-accent/25 bg-nova-accent/4 p-3">
         <div className="space-y-1">
@@ -416,7 +449,7 @@ function ConfigEditor({
             size="sm"
             variant="outline"
             className="h-7 flex-1 text-xs"
-            onClick={() => setEditing(false)}
+            onClick={() => onOpenChange(false)}
           >
             取消
           </Button>
@@ -439,15 +472,28 @@ function ConfigEditor({
             已自定义 · localStorage
           </Badge>
         )}
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-6 px-2 text-[0.6875rem] text-muted-foreground"
-          disabled={disabled}
-          onClick={customized ? () => onOverridesChange({}) : openEditor}
-        >
-          {customized ? "恢复 .env 默认" : "编辑配置"}
-        </Button>
+        <div className="flex items-center gap-1">
+          {customized && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-2 text-[0.6875rem] text-muted-foreground"
+              disabled={disabled}
+              onClick={() => onOverridesChange({})}
+            >
+              恢复默认
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-6 px-2 text-[0.6875rem] text-muted-foreground"
+            disabled={disabled}
+            onClick={() => onOpenChange(true)}
+          >
+            编辑配置
+          </Button>
+        </div>
       </div>
 
       <dl className="space-y-1.5 rounded-lg border border-white/8 bg-white/2 px-3 py-2.5 font-mono text-[0.6875rem] leading-relaxed">
@@ -1030,6 +1076,12 @@ function DraftComposer({
   sending,
   onStop,
   hasAgent,
+  endpoint,
+  apiKey,
+  model,
+  onModelSelect,
+  onOpenConfig,
+  onQuickCase,
 }: {
   draft: string;
   onDraftChange: (value: string) => void;
@@ -1037,10 +1089,56 @@ function DraftComposer({
   sending: boolean;
   onStop: () => void;
   hasAgent: boolean;
+  /** 当前生效端点（覆盖值 ?? 登记默认），用于拉取模型列表 */
+  endpoint: string;
+  /** 当前生效密钥（仅界面覆盖值），用于拉取模型列表 */
+  apiKey: string;
+  /** 当前生效模型标识 */
+  model: string;
+  /** 从下拉里选中模型：写入可视化配置 */
+  onModelSelect: (model: string) => void;
+  /** 打开左侧「连接配置」编辑器 */
+  onOpenConfig: () => void;
+  /** 快捷发起一条验证用例（+ 菜单） */
+  onQuickCase: (text: string) => void;
 }) {
+  const [modelMenu, setModelMenu] = useState(false);
+  const [models, setModels] = useState<string[] | null>(null);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [loadingModels, setLoadingModels] = useState(false);
+
+  // hover 打开时才拉取：端点/密钥可能刚被用户改过，每次打开都重新取
+  const fetchModels = useCallback(async () => {
+    setLoadingModels(true);
+    setModelsError(null);
+    try {
+      const response = await fetch("/api/agents/models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint, apiKey }),
+      });
+      const body = (await response.json()) as {
+        models?: string[];
+        message?: string;
+        hint?: string;
+      };
+      if (!response.ok) {
+        throw new Error(body.message ?? `请求失败（${response.status}）`);
+      }
+      setModels(body.models ?? []);
+    } catch (error) {
+      setModels(null);
+      setModelsError(
+        error instanceof Error ? error.message : "模型列表获取失败",
+      );
+    } finally {
+      setLoadingModels(false);
+    }
+  }, [endpoint, apiKey]);
+
   return (
     <Card>
-      {/* 参考对话式 IDE 的输入卡：无边框输入在上，工具行在下，发送钮贴右 */}
+      {/* 完整复刻对话式 IDE 输入卡：无边框输入在上，双簇工具行在下，发送钮贴右 */}
       <CardContent className="p-2.5">
         <Textarea
           value={draft}
@@ -1054,7 +1152,7 @@ function DraftComposer({
           rows={2}
           placeholder={
             hasAgent
-              ? "自定义验证输入：告诉 Agent 你想让它做什么…"
+              ? "提出后续修改要求 / 告诉 Agent 你想让它做什么…"
               : "先在左侧「验证配置」选择一个目标 Agent"
           }
           className="min-w-0 resize-none border-none bg-transparent px-1.5 py-1 text-sm shadow-none focus-visible:ring-0"
@@ -1062,55 +1160,199 @@ function DraftComposer({
           disabled={!hasAgent}
         />
 
-        <div className="mt-1 flex items-center gap-2 px-0.5 pb-0.5">
-          <div className="mr-auto flex min-w-0 items-center gap-2">
-            {sending ? (
-              <>
-                <LoaderCircle className="size-3.5 animate-spin text-nova-cyan" />
-                <span className="font-mono text-[0.6875rem] text-nova-cyan">
-                  验证执行中…
+        <div className="mt-1.5 flex items-center gap-1.5 px-0.5 pb-0.5">
+          {/* 左簇：只留用例入口（+） */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild disabled={!hasAgent || sending}>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="验证用例"
+                className="size-7 text-muted-foreground hover:text-foreground"
+              >
+                <Plus />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              <DropdownMenuLabel className="text-xs">
+                快捷验证用例
+              </DropdownMenuLabel>
+              <DropdownMenuItem
+                onClick={() => onQuickCase(RESEARCH_TEXT)}
+                className="text-xs"
+              >
+                交叉验证调研
+                <span className="ml-auto text-[0.625rem] text-muted-foreground">
+                  工具调用规范
                 </span>
-              </>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => onQuickCase(FOLLOWUP_TEXT)}
+                className="text-xs"
+              >
+                追问数据缺口
+                <span className="ml-auto text-[0.625rem] text-muted-foreground">
+                  上下文保持
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => onQuickCase(INJECTION_TEXT)}
+                className="text-xs"
+              >
+                越权注入
+                <span className="ml-auto text-[0.625rem] text-muted-foreground">
+                  注入免疫
+                </span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* 右簇：当前模型（hover 下拉）、thinking 常开、发送 */}
+          <div className="ml-auto flex items-center gap-1.5">
+            {sending && (
+              <LoaderCircle
+                className="size-4 animate-spin text-muted-foreground"
+                aria-label="验证执行中"
+              />
+            )}
+
+            <DropdownMenu
+              open={modelMenu}
+              onOpenChange={(open) => {
+                setModelMenu(open);
+                if (open) void fetchModels();
+              }}
+            >
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="选择模型"
+                  disabled={!hasAgent || sending}
+                  onMouseEnter={() => {
+                    if (!hasAgent || sending) return;
+                    setModelMenu(true);
+                    void fetchModels();
+                  }}
+                  className="size-7 text-muted-foreground hover:text-foreground"
+                >
+                  <Box />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="w-64"
+                onMouseLeave={() => setModelMenu(false)}
+              >
+                <DropdownMenuLabel className="flex items-center justify-between text-xs">
+                  模型
+                  <span className="font-mono text-[0.625rem] font-normal text-muted-foreground">
+                    {model}
+                  </span>
+                </DropdownMenuLabel>
+
+                {loadingModels && (
+                  <div className="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
+                    <LoaderCircle className="size-3.5 animate-spin" />
+                    正在获取模型列表…
+                  </div>
+                )}
+
+                {!loadingModels && modelsError && (
+                  <div className="px-2 py-2 text-xs leading-relaxed text-nova-rose">
+                    {modelsError}
+                  </div>
+                )}
+
+                {!loadingModels &&
+                  !modelsError &&
+                  (models?.length ?? 0) === 0 && (
+                    <div className="px-2 py-2 text-xs text-muted-foreground">
+                      端点未返回模型
+                    </div>
+                  )}
+
+                {models?.map((id) => (
+                  <DropdownMenuItem
+                    key={id}
+                    className="font-mono text-xs"
+                    onClick={() => {
+                      onModelSelect(id);
+                      setModelMenu(false);
+                    }}
+                  >
+                    <span className="min-w-0 truncate">{id}</span>
+                    {id === model && (
+                      <CircleCheck className="ml-auto size-3.5 shrink-0 text-nova-accent" />
+                    )}
+                  </DropdownMenuItem>
+                ))}
+
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="text-xs"
+                  onClick={() => {
+                    setModelMenu(false);
+                    onOpenConfig();
+                  }}
+                >
+                  模型配置…
+                  <span className="ml-auto text-[0.625rem] text-muted-foreground">
+                    端点 / 密钥
+                  </span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="过程块常开"
+                  disabled
+                  className="size-7 text-muted-foreground opacity-40"
+                >
+                  <Brain />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">已停用</TooltipContent>
+            </Tooltip>
+
+            {sending ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label="中止执行"
+                    onClick={onStop}
+                    className="size-9 shrink-0 rounded-lg border-nova-rose/40 text-nova-rose transition-all hover:bg-nova-rose/12 hover:text-nova-rose active:scale-95"
+                  >
+                    <Square />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">中止执行</TooltipContent>
+              </Tooltip>
             ) : (
-              <span className="truncate text-[0.625rem] text-muted-foreground/70">
-                工具由 NOVA 代执行 · ⌘/Ctrl + Enter 发送
-              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon"
+                    aria-label="发起验证"
+                    onClick={onSubmit}
+                    disabled={!hasAgent || draft.trim().length === 0}
+                    className="size-9 shrink-0 rounded-lg border border-nova-accent/40 bg-nova-accent/15 text-nova-accent transition-all hover:bg-nova-accent/25 hover:shadow-[0_0_18px_color-mix(in_oklab,var(--nova-accent)_35%,transparent)] active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    <ArrowUp />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  发起验证（⌘/Ctrl + Enter）
+                </TooltipContent>
+              </Tooltip>
             )}
           </div>
-
-          {sending ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label="中止执行"
-                  onClick={onStop}
-                  className="size-9 shrink-0 rounded-lg border-nova-rose/40 text-nova-rose transition-all hover:bg-nova-rose/12 hover:text-nova-rose active:scale-95"
-                >
-                  <Square />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">中止执行</TooltipContent>
-            </Tooltip>
-          ) : (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="icon"
-                  aria-label="发起验证"
-                  onClick={onSubmit}
-                  disabled={!hasAgent || draft.trim().length === 0}
-                  className="size-9 shrink-0 rounded-lg border border-nova-accent/40 bg-nova-accent/15 text-nova-accent transition-all hover:bg-nova-accent/25 hover:shadow-[0_0_18px_color-mix(in_oklab,var(--nova-accent)_35%,transparent)] active:scale-95 disabled:pointer-events-none disabled:opacity-40"
-                >
-                  <Send />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                发起验证（⌘/Ctrl + Enter）
-              </TooltipContent>
-            </Tooltip>
-          )}
         </div>
       </CardContent>
     </Card>
