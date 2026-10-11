@@ -16,7 +16,7 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LogStream } from "@/components/nova/log-stream";
 import { MarkdownText } from "@/components/nova/markdown-text";
 import { Badge } from "@/components/ui/badge";
@@ -40,14 +40,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -161,34 +153,51 @@ export function ConverseLab({
   /** 已登记的本地 Agent（端点与密钥变量名在这里） */
   localAgents?: readonly LocalAgentEntry[];
 }) {
-  const [agentId, setAgentId] = useState(
-    () => localAgents[0]?.id ?? agents[0]?.id ?? "",
-  );
+  // 多选目标：广播验证。默认选中第一个登记的 Agent
+  const [targetIds, setTargetIds] = useState<string[]>(() => {
+    const first = localAgents[0]?.id ?? agents[0]?.id;
+    return first ? [first] : [];
+  });
   const [draft, setDraft] = useState("");
 
   const converse = useConverse();
 
-  // 每个 Agent 一条独立会话：切换目标不丢历史，可来回对照验证
-  const turns = converse.sessions[agentId] ?? [];
-  const sending = turns.some((turn) => turn.status === "running");
-  const totals = useMemo(() => sessionTotalsOf(turns), [turns]);
-
-  // 并行验证可见性：其他 Agent 还有流在跑时给出提示
-  const otherRunningCount = useMemo(
-    () =>
-      Object.entries(converse.sessions).filter(
-        ([id, agentTurns]) =>
-          id !== agentId &&
-          agentTurns.some((turn) => turn.status === "running"),
-      ).length,
-    [converse.sessions, agentId],
+  const agentNameOf = useCallback(
+    (id: string) => {
+      const entry = localAgents.find((item) => item.id === id);
+      if (entry) return entry.name;
+      return agents.find((item) => item.id === id)?.name ?? id;
+    },
+    [localAgents, agents],
   );
 
-  const localEntry = localAgents.find((item) => item.id === agentId);
-  const agent =
-    (localEntry
-      ? localAgentProfile(localEntry)
-      : agents.find((item) => item.id === agentId)) ?? null;
+  // 合并多选 Agent 的会话流：保持各桶内对象引用不变（卡片 memo 生效），
+  // 按创建时间排序，每张卡自带归属 Agent
+  const turns = useMemo(
+    () =>
+      targetIds
+        .flatMap((id) => converse.sessions[id] ?? [])
+        .sort((a, b) => a.createdAt - b.createdAt),
+    [targetIds, converse.sessions],
+  );
+  const runningCount = useMemo(
+    () =>
+      targetIds.filter((id) =>
+        (converse.sessions[id] ?? []).some((turn) => turn.status === "running"),
+      ).length,
+    [targetIds, converse.sessions],
+  );
+  const sending = runningCount > 0;
+  const totals = useMemo(() => sessionTotalsOf(turns), [turns]);
+
+  const selectedAgents = targetIds
+    .map((id) => {
+      const entry = localAgents.find((item) => item.id === id);
+      if (entry) return localAgentProfile(entry);
+      return agents.find((item) => item.id === id) ?? null;
+    })
+    .filter((agent): agent is AgentProfile => agent !== null);
+  const localEntry = localAgents.find((item) => item.id === targetIds[0]);
 
   // 验证记录流新增轮次 / 事件 / 结论时跟随到底部；容器只在 xl 断点滚动，
   // 其余断点页面整体滚动，这里赋值无害
@@ -217,7 +226,7 @@ export function ConverseLab({
   // 内置 .env 档案：不进 localStorage、不可编辑删除
   const envProfile: AgentConnectionProfile = {
     id: ENV_PROFILE_ID,
-    name: ".env 默认",
+    name: "默认配置",
     endpoint: localEntry?.endpoint ?? "",
     model: localEntry?.model ?? "agnes-3.0-flash",
   };
@@ -260,7 +269,7 @@ export function ConverseLab({
     // 新增或编辑后即激活：刚保存的配置就是用户想用的
     persistProfiles(next, profile.id);
     // 端点/模型变了，历史上下文没有意义
-    converse.reset(agentId);
+    for (const id of targetIds) converse.reset(id);
   };
 
   const deleteProfile = (id: string) => {
@@ -272,16 +281,20 @@ export function ConverseLab({
 
   const selectProfile = (id: string) => {
     persistProfiles(profiles, id === ENV_PROFILE_ID ? null : id);
-    // 切换连接即清空当前 Agent 的会话：跨端点/模型的历史没有意义
-    converse.reset(agentId);
+    // 切换连接即清空会话：跨端点/模型的历史没有意义
+    for (const id of targetIds) converse.reset(id);
   };
 
+  // 广播：一条输入同时发给所有选中的 Agent，各自独立会话并行执行
   const quickSend = (text: string) => {
-    if (agent && !sending) void converse.send(agent.id, text, overrides);
+    if (selectedAgents.length === 0) return;
+    for (const item of selectedAgents) {
+      void converse.send(item.id, text, overrides);
+    }
   };
 
   const submitDraft = () => {
-    if (!agent || sending || draft.trim().length === 0) return;
+    if (selectedAgents.length === 0 || draft.trim().length === 0) return;
     quickSend(draft);
     setDraft("");
   };
@@ -294,14 +307,21 @@ export function ConverseLab({
         <VerificationConfig
           localAgents={localAgents}
           agents={agents}
-          agentId={agentId}
-          onAgentChange={setAgentId}
-          sending={sending}
+          targetIds={targetIds}
+          onToggleAgent={(id) => {
+            setTargetIds((prev) => {
+              // 至少保留一个目标：最后一个不可取消
+              if (prev.includes(id) && prev.length === 1) return prev;
+              return prev.includes(id)
+                ? prev.filter((item) => item !== id)
+                : [...prev, id];
+            });
+          }}
         />
         <VerificationCases
           completed={totals.completedTurns}
           sending={sending}
-          disabled={!agent}
+          disabled={selectedAgents.length === 0}
           onPick={quickSend}
         />
         <VerificationScope />
@@ -322,11 +342,12 @@ export function ConverseLab({
       {/* 主栏：会话累计条 + 验证记录流（独立滚动）+ 沉底输入区 */}
       <div className="flex min-w-0 flex-col gap-4 xl:h-full xl:min-h-0">
         <SessionStrip
-          agentName={agent?.name ?? null}
+          agentNames={selectedAgents.map((item) => item.name)}
           totals={totals}
-          sending={sending}
-          otherRunningCount={otherRunningCount}
-          onReset={() => converse.reset(agentId)}
+          runningCount={runningCount}
+          onReset={() => {
+            for (const id of targetIds) converse.reset(id);
+          }}
         />
 
         <div
@@ -341,6 +362,7 @@ export function ConverseLab({
               <VerificationCard
                 key={turn.id}
                 turn={turn}
+                agentName={agentNameOf(turn.agentId)}
                 index={index + 1}
                 isLast={index === turns.length - 1}
               />
@@ -353,9 +375,12 @@ export function ConverseLab({
             draft={draft}
             onDraftChange={setDraft}
             onSubmit={submitDraft}
-            sending={sending}
-            onStop={() => converse.stop(agentId)}
-            hasAgent={agent !== null}
+            runningCount={runningCount}
+            targetCount={selectedAgents.length}
+            onStop={() => {
+              for (const id of targetIds) converse.stop(id);
+            }}
+            hasAgent={selectedAgents.length > 0}
             profiles={allProfiles}
             activeProfileId={activeProfileId}
             onSelectProfile={selectProfile}
@@ -375,40 +400,61 @@ export function ConverseLab({
 function VerificationConfig({
   localAgents,
   agents,
-  agentId,
-  onAgentChange,
-  sending,
+  targetIds,
+  onToggleAgent,
 }: {
   localAgents: readonly LocalAgentEntry[];
   agents: readonly AgentProfile[];
-  agentId: string;
-  onAgentChange: (id: string) => void;
-  sending: boolean;
+  /** 已选中的目标 Agent（多选，广播验证） */
+  targetIds: readonly string[];
+  onToggleAgent: (id: string) => void;
 }) {
+  const options =
+    localAgents.length > 0
+      ? localAgents.map((item) => ({
+          id: item.id,
+          name: item.name,
+          model: item.model,
+        }))
+      : agents.map((item) => ({
+          id: item.id,
+          name: item.name,
+          model: item.model,
+        }));
+
   return (
     <Card>
-      <CardHeaderBlock title="验证配置" hint="被验证对象与执行约束" />
+      <CardHeaderBlock title="验证配置" hint="勾选多个目标即并行对照验证" />
       <CardContent className="space-y-3">
         <div className="space-y-2">
-          <Label htmlFor="converse-agent">目标 Agent</Label>
-          <Select
-            value={agentId}
-            onValueChange={onAgentChange}
-            disabled={sending}
-          >
-            <SelectTrigger id="converse-agent" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {(localAgents.length > 0 ? localAgents : agents).map((item) => (
-                  <SelectItem key={item.id} value={item.id}>
-                    {item.name} · {item.codename}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+          <Label>目标 Agent</Label>
+          <div className="flex flex-wrap gap-1.5">
+            {options.map((item) => {
+              const active = targetIds.includes(item.id);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => onToggleAgent(item.id)}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors",
+                    active
+                      ? "border-nova-accent/40 bg-nova-accent/12 text-nova-accent"
+                      : "border-white/10 bg-white/2 text-muted-foreground hover:border-white/20 hover:text-foreground",
+                  )}
+                >
+                  {active && (
+                    <CircleCheck aria-hidden="true" className="size-3" />
+                  )}
+                  <span className="font-medium">{item.name}</span>
+                  <span className="font-mono text-[0.625rem] opacity-70">
+                    {item.model}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         <Separator />
@@ -418,15 +464,13 @@ function VerificationConfig({
             <span aria-hidden="true" className="text-nova-cyan">
               ·
             </span>
-            external_search 走真实互联网检索（Wikipedia / Bing），summarize
-            由模型实际压缩；不注入混沌故障。
+            一条输入同时发给所有勾选的 Agent，各自独立会话并行执行。
           </li>
           <li className="flex gap-1.5">
             <span aria-hidden="true" className="text-nova-cyan">
               ·
             </span>
-            端点/模型默认读仓库根 .env；连接档案在输入卡模型下拉里管理，
-            保存在浏览器 localStorage，密钥值只随请求透传、服务端不落任何存储。
+            工具由 NOVA 代执行（真实检索与压缩），不注入混沌故障。
           </li>
         </ul>
       </CardContent>
@@ -437,8 +481,8 @@ function VerificationConfig({
 /**
  * 模型配置管理弹窗。
  *
- * 连接档案在 localStorage 里增删改：列表视图切换激活档案，
- * 表单视图新增 / 编辑单条（端点、模型、密钥）。内置的「.env 默认」
+ * 连接档案在浏览器本地增删改：列表视图切换激活档案，
+ * 表单视图新增 / 编辑单条（端点、模型、密钥）。内置的「默认配置」
  * 档案不进存储、不可编辑删除，作为无覆盖的兜底。
  */
 function AgentConfigDialog({
@@ -528,7 +572,7 @@ function AgentConfigDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="cfg-endpoint" className="text-xs">
-                端点（OpenAI 兼容，含 /v1）
+                端点
               </Label>
               <Input
                 id="cfg-endpoint"
@@ -580,7 +624,7 @@ function AgentConfigDialog({
             >
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium">
-                  .env 默认
+                  默认配置
                   {(activeProfileId === null ||
                     activeProfileId === ENV_PROFILE_ID) && (
                     <span className="nova-mono-label ml-2 text-[0.5625rem] text-nova-accent">
@@ -867,13 +911,13 @@ function ScopeItem({
 /* -------------------------------------------------------------------------- */
 
 function SessionStrip({
-  agentName,
+  agentNames,
   totals,
-  sending,
-  otherRunningCount,
+  runningCount,
   onReset,
 }: {
-  agentName: string | null;
+  /** 已选目标 Agent 名（多选时聚合展示） */
+  agentNames: readonly string[];
   totals: {
     turns: number;
     completedTurns: number;
@@ -881,21 +925,26 @@ function SessionStrip({
     totalToolCalls: number;
     injectionObeyed: boolean;
   };
-  sending: boolean;
-  /** 其他 Agent 仍有流在跑的数量（并行验证可见性） */
-  otherRunningCount: number;
+  runningCount: number;
   onReset: () => void;
 }) {
+  const targetLabel =
+    agentNames.length === 0
+      ? ""
+      : agentNames.length === 1
+        ? `正在验证 ${agentNames[0]} · `
+        : `正在对照验证 ${agentNames.length} 个 Agent · `;
+
   return (
     <div className="nova-panel flex shrink-0 flex-wrap items-center gap-x-5 gap-y-2 rounded-xl px-4 py-3">
       <div className="mr-auto">
         <p className="nova-mono-label text-nova-starlight">会话累计</p>
         <p className="mt-0.5 font-mono text-[0.6875rem] text-muted-foreground">
-          {agentName ? `正在验证 ${agentName} · ` : ""}
+          {targetLabel}
           {totals.turns} 轮 · {totals.completedTurns} 轮完成
-          {otherRunningCount > 0 && (
+          {runningCount > 0 && (
             <span className="ml-2 text-nova-cyan">
-              · 另有 {otherRunningCount} 个 Agent 并行执行中
+              · {runningCount} 个 Agent 执行中
             </span>
           )}
         </p>
@@ -913,7 +962,7 @@ function SessionStrip({
         variant="outline"
         size="sm"
         onClick={onReset}
-        disabled={sending || totals.turns === 0}
+        disabled={runningCount > 0 || totals.turns === 0}
       >
         <RotateCcw />
         清空会话
@@ -969,10 +1018,13 @@ function EmptyVerification() {
 /** 一轮验证 = 一张卡：判定行、thinking 式过程块、读数、md 渲染的回复 */
 const VerificationCard = memo(function VerificationCard({
   turn,
+  agentName,
   index,
   isLast,
 }: {
   turn: ConverseTurn;
+  /** 归属 Agent 名：多目标对照时每张卡标注来源 */
+  agentName: string;
   index: number;
   isLast: boolean;
 }) {
@@ -1021,7 +1073,7 @@ const VerificationCard = memo(function VerificationCard({
         {/* 头部：轮次 + 状态判定 */}
         <div className="flex flex-wrap items-center gap-2">
           <p className="nova-mono-label mr-auto text-nova-starlight">
-            第 {index} 轮验证
+            {agentName} · 第 {index} 轮验证
           </p>
           <TurnStatusChip status={turn.status} />
           {result?.injectionObeyed && (
@@ -1254,7 +1306,8 @@ function DraftComposer({
   draft,
   onDraftChange,
   onSubmit,
-  sending,
+  runningCount,
+  targetCount,
   onStop,
   hasAgent,
   profiles,
@@ -1266,7 +1319,10 @@ function DraftComposer({
   draft: string;
   onDraftChange: (value: string) => void;
   onSubmit: () => void;
-  sending: boolean;
+  /** 正在执行的 Agent 数：>0 即发送中，加载横幅显示在输入框上方 */
+  runningCount: number;
+  /** 已选目标 Agent 数 */
+  targetCount: number;
   onStop: () => void;
   hasAgent: boolean;
   /** 全部连接档案（含内置 .env 默认），供下拉切换 */
@@ -1286,6 +1342,14 @@ function DraftComposer({
     <Card>
       {/* 完整复刻对话式 IDE 输入卡：无边框输入在上，双簇工具行在下，发送钮贴右 */}
       <CardContent className="p-2.5">
+        {runningCount > 0 && (
+          <div className="mb-1.5 flex items-center gap-2 rounded-lg border border-nova-accent/25 bg-nova-accent/6 px-2.5 py-1.5">
+            <LoaderCircle className="size-3.5 animate-spin text-nova-cyan" />
+            <span className="font-mono text-[0.6875rem] text-nova-cyan">
+              验证执行中 · {runningCount} 个 Agent
+            </span>
+          </div>
+        )}
         <Textarea
           value={draft}
           onChange={(event) => onDraftChange(event.target.value)}
@@ -1305,8 +1369,10 @@ function DraftComposer({
           rows={2}
           placeholder={
             hasAgent
-              ? "提出后续修改要求 / 告诉 Agent 你想让它做什么…（Enter 发送）"
-              : "先在左侧「验证配置」选择一个目标 Agent"
+              ? targetCount > 1
+                ? `同时发给 ${targetCount} 个 Agent…（Enter 发送）`
+                : "提出后续修改要求 / 告诉 Agent 你想让它做什么…（Enter 发送）"
+              : "先在左侧「验证配置」勾选至少一个目标 Agent"
           }
           className="min-w-0 resize-none border-none bg-transparent px-1.5 py-1 text-sm shadow-none focus-visible:ring-0"
           // 执行中不锁输入：可以先写好下一条，结束后直接发
@@ -1316,7 +1382,10 @@ function DraftComposer({
         <div className="mt-1.5 flex items-center gap-1.5 px-0.5 pb-0.5">
           {/* 左簇：只留用例入口（+） */}
           <DropdownMenu>
-            <DropdownMenuTrigger asChild disabled={!hasAgent || sending}>
+            <DropdownMenuTrigger
+              asChild
+              disabled={!hasAgent || runningCount > 0}
+            >
               <Button
                 variant="ghost"
                 size="icon"
@@ -1362,22 +1431,15 @@ function DraftComposer({
 
           {/* 右簇：当前模型（hover 下拉）、thinking 常开、发送 */}
           <div className="ml-auto flex items-center gap-1.5">
-            {sending && (
-              <LoaderCircle
-                className="size-4 animate-spin text-muted-foreground"
-                aria-label="验证执行中"
-              />
-            )}
-
             <DropdownMenu open={modelMenu} onOpenChange={setModelMenu}>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
                   aria-label="选择连接配置"
-                  disabled={!hasAgent || sending}
+                  disabled={!hasAgent || runningCount > 0}
                   onMouseEnter={() => {
-                    if (!hasAgent || sending) return;
+                    if (!hasAgent || runningCount > 0) return;
                     setModelMenu(true);
                   }}
                   className="size-7 text-muted-foreground hover:text-foreground"
@@ -1390,12 +1452,7 @@ function DraftComposer({
                 className="w-64"
                 onMouseLeave={() => setModelMenu(false)}
               >
-                <DropdownMenuLabel className="flex items-center justify-between text-xs">
-                  连接配置
-                  <span className="font-mono text-[0.625rem] font-normal text-muted-foreground">
-                    默认读 .env
-                  </span>
-                </DropdownMenuLabel>
+                <DropdownMenuLabel className="text-xs">模型</DropdownMenuLabel>
 
                 {/* 连接档案列表：点击切换激活 */}
                 {profiles.map((profile) => (
@@ -1445,7 +1502,7 @@ function DraftComposer({
               <TooltipContent side="top">已停用</TooltipContent>
             </Tooltip>
 
-            {sending ? (
+            {runningCount > 0 ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button

@@ -17,6 +17,10 @@ export type ConverseTurnStatus = "running" | "completed" | "failed" | "stopped";
 /** 一条对话轮：用户消息 + 服务端执行产物 */
 export interface ConverseTurn {
   id: string;
+  /** 归属 Agent：多选目标后合并流里按它标注与分桶 */
+  agentId: string;
+  /** 创建时间戳：多 Agent 会话合并展示时排序用 */
+  createdAt: number;
   userText: string;
   status: ConverseTurnStatus;
   logs: SimulationLog[];
@@ -169,6 +173,8 @@ export function useConverse() {
           ...(prev[agentId] ?? []),
           {
             id: turnId,
+            agentId,
+            createdAt: Date.now(),
             userText: userMessage,
             status: "running" as const,
             logs: [],
