@@ -15,10 +15,10 @@ import {
   type LlmSettings,
   parseToolArgs,
 } from "./llm";
+import { realExternalSearch } from "./real-search";
 import {
   CHAOS_TARGET_TOOL,
   detectInjectionObeyed,
-  executeTool,
   scanRiskPatterns,
   TOOL_DEFINITIONS,
 } from "./tools";
@@ -26,10 +26,12 @@ import {
 /**
  * 对话轮执行器（Converse Lab 的唯一执行路径）。
  *
- * 与沙盒执行器共用同一套工具层与 LLM 客户端，差别只在于：
+ * 与沙盒执行器共用同一套 LLM 客户端与工具定义，差别只在于：
  * - 任务书不是固定文案，而是用户消息 + 历轮对话上下文；
- * - **不注入混沌**：工具以 `fault=null` 执行，看到的失败只来自 Agent
- *   自身的参数失误，观测才是干净的；
+ * - **工具是真实的**：external_search 走真实互联网检索（Bing RSS），
+ *   summarize 由同一模型实际压缩 —— 没有伪造语料，观测到的失败
+ *   只来自真实网络或 Agent 自身的参数失误；
+ * - **不注入混沌**：观测才是干净的；
  * - 不产生评分：事件里没有 scoreAfter，结论只是可观测后果
  *   （调用次数、tokens、延迟、注入命中标记），页面因此不进排行榜。
  */
@@ -186,13 +188,20 @@ export async function* runConverseTurn(
         };
       }
 
-      // --- 逐个执行工具调用（不注入混沌） ---
+      // --- 逐个执行工具调用（真实数据，不注入混沌） ---
       for (const call of completion.toolCalls) {
         if (signal?.aborted) break;
 
         const name = call.function.name;
         const args = parseToolArgs(call.function.arguments);
-        const outcome = executeTool(name, args, null, 0);
+        const outcome = await runConverseTool(name, args, settings, signal);
+
+        if (outcome.usage) {
+          state.usage.calls += outcome.usage.calls;
+          state.usage.promptTokens += outcome.usage.promptTokens;
+          state.usage.completionTokens += outcome.usage.completionTokens;
+          state.usage.totalTokens += outcome.usage.totalTokens;
+        }
 
         const queryText =
           name === CHAOS_TARGET_TOOL
@@ -253,9 +262,12 @@ export async function* runConverseTurn(
               outcome.ok
                 ? outcome.records === 0
                   ? "返回空结果集"
-                  : `返回 ${outcome.records} 条记录`
-                : "参数校验失败，属 Agent 自身失误",
-              truncate(outcome.ok ? outcome.content : outcome.error, 96),
+                  : `返回 ${outcome.records} 条真实结果`
+                : "工具失败，属真实网络或参数失误",
+              truncate(
+                outcome.ok ? outcome.content : (outcome.error ?? ""),
+                96,
+              ),
             ].join(" · "),
           },
         };
@@ -300,4 +312,114 @@ export async function* runConverseTurn(
 function truncate(text: string, max: number): string {
   const clean = text.replace(/\s+/g, " ").trim();
   return clean.length > max ? `${clean.slice(0, max)}…` : clean;
+}
+
+/** 工具执行的返回：ok/content 供回灌，usage 为 summarize 消耗的真实 token */
+interface ToolRunOutcome {
+  ok: boolean;
+  records: number;
+  content: string;
+  error?: string;
+  usage?: TokenUsage;
+}
+
+/**
+ * 对话路径的工具执行：真实数据源，没有确定性语料。
+ *
+ * external_search 走 Bing RSS（真实互联网，失败即真实失败）；
+ * summarize 交给同一模型实际压缩（无工具的一次补全，token 计入统计）。
+ */
+async function runConverseTool(
+  name: string,
+  args: Record<string, unknown>,
+  settings: LlmSettings,
+  signal?: AbortSignal,
+): Promise<ToolRunOutcome> {
+  if (name === CHAOS_TARGET_TOOL) {
+    const query = typeof args.query === "string" ? args.query.trim() : "";
+    if (query.length === 0) {
+      return {
+        ok: false,
+        records: 0,
+        content: "",
+        error:
+          "参数校验失败：query 不能为空。这是调用方失误，请补全参数后重试。",
+      };
+    }
+    const limit = typeof args.limit === "number" ? args.limit : 5;
+
+    try {
+      const result = await realExternalSearch(query, limit, signal);
+      return {
+        ok: true,
+        records: result.count,
+        content: JSON.stringify(result),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        records: 0,
+        content: "",
+        error:
+          error instanceof Error ? error.message : "检索失败：未知网络错误。",
+      };
+    }
+  }
+
+  if (name === "summarize") {
+    const records = Array.isArray(args.records)
+      ? args.records.map((item) => String(item)).filter(Boolean)
+      : [];
+    if (records.length === 0) {
+      return {
+        ok: false,
+        records: 0,
+        content: "",
+        error:
+          "参数校验失败：records 不能为空。请把待压缩的记录作为字符串数组传入。",
+      };
+    }
+
+    // 真实压缩：一次无工具的补全，输出就是回灌给 Agent 的摘要
+    const completion = await chatCompletion(settings, {
+      model: settings.model,
+      messages: [
+        {
+          role: "system",
+          content:
+            "你是记录压缩器：把给定记录压缩为不超过三句话的摘要，保留可核验的数字与结论，只输出摘要本身。",
+        },
+        {
+          role: "user",
+          content: records
+            .map((record, index) => `${index + 1}. ${record}`)
+            .join("\n")
+            .slice(0, 6_000),
+        },
+      ],
+      tools: [],
+      temperature: 0.2,
+      maxTokens: 300,
+      signal,
+    });
+
+    return {
+      ok: true,
+      records: records.length,
+      content: `已压缩 ${records.length} 条记录为摘要：${completion.content}`,
+      usage: {
+        calls: 1,
+        promptTokens: completion.usage.promptTokens,
+        completionTokens: completion.usage.completionTokens,
+        totalTokens: completion.usage.totalTokens,
+      },
+    };
+  }
+
+  return {
+    ok: false,
+    records: 0,
+    content: "",
+    error: `未知工具：${name}。可用工具只有 external_search 与 summarize。`,
+  };
 }

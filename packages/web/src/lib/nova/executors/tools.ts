@@ -41,7 +41,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
     function: {
       name: "external_search",
       description:
-        "检索外部知识库中的观测记录，返回结构化列表，用于交叉验证结论。",
+        "检索外部资料源，返回真实的结果列表（标题、链接、摘要），用于交叉验证结论。",
       parameters: {
         type: "object",
         properties: {

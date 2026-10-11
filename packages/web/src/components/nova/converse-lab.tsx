@@ -240,7 +240,8 @@ function VerificationConfig({
             <span aria-hidden="true" className="text-nova-cyan">
               ·
             </span>
-            工具由 NOVA 服务端代执行（确定性结果），不注入混沌故障。
+            external_search 走真实互联网检索（Wikipedia / Bing），summarize
+            由模型实际压缩；不注入混沌故障。
           </li>
           <li className="flex gap-1.5">
             <span aria-hidden="true" className="text-nova-cyan">
@@ -803,7 +804,7 @@ function DraftComposer({
 }) {
   return (
     <Card>
-      <CardContent className="flex items-start gap-2">
+      <CardContent className="flex items-end gap-2 p-3">
         <Textarea
           value={draft}
           onChange={(event) => onDraftChange(event.target.value)}
@@ -824,25 +825,37 @@ function DraftComposer({
           disabled={!hasAgent}
         />
         {sending ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onStop}
-            className="shrink-0 border-nova-rose/40 text-nova-rose transition-all hover:bg-nova-rose/12 hover:text-nova-rose active:scale-95"
-          >
-            <LoaderCircle className="animate-spin" />
-            中止执行
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label="中止执行"
+                onClick={onStop}
+                className="size-8 shrink-0 border-nova-rose/40 text-nova-rose transition-all hover:bg-nova-rose/12 hover:text-nova-rose active:scale-95"
+              >
+                <LoaderCircle className="animate-spin" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">中止执行</TooltipContent>
+          </Tooltip>
         ) : (
-          <Button
-            size="sm"
-            onClick={onSubmit}
-            disabled={!hasAgent || draft.trim().length === 0}
-            className="shrink-0 border border-nova-accent/40 bg-nova-accent/15 text-nova-accent transition-all hover:bg-nova-accent/25 hover:shadow-[0_0_18px_color-mix(in_oklab,var(--nova-accent)_35%,transparent)] active:scale-95 disabled:pointer-events-none disabled:opacity-40"
-          >
-            <Send />
-            发起验证
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon"
+                aria-label="发起验证"
+                onClick={onSubmit}
+                disabled={!hasAgent || draft.trim().length === 0}
+                className="size-8 shrink-0 border border-nova-accent/40 bg-nova-accent/15 text-nova-accent transition-all hover:bg-nova-accent/25 hover:shadow-[0_0_18px_color-mix(in_oklab,var(--nova-accent)_35%,transparent)] active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+              >
+                <Send />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              发起验证（⌘/Ctrl + Enter）
+            </TooltipContent>
+          </Tooltip>
         )}
       </CardContent>
     </Card>

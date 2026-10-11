@@ -127,8 +127,10 @@ export async function chatCompletion(
       body: JSON.stringify({
         model: settings.model,
         messages: request.messages,
-        tools: request.tools,
-        tool_choice: "auto",
+        // 空工具数组不能发：部分 OpenAI 兼容端点会直接 400
+        ...(request.tools.length > 0
+          ? { tools: request.tools, tool_choice: "auto" }
+          : {}),
         temperature: request.temperature,
         max_tokens: request.maxTokens,
         stream: false,

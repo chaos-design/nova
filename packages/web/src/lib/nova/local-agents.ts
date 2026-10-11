@@ -53,25 +53,11 @@ export interface LocalAgentEntry {
  * 这是 NOVA 唯一的数据来源：界面上的档案、评分、榜单全部由这里登记的
  * Agent 真实跑出来的运行记录派生，没有任何预置档案。
  *
- * 仓库自带一个零依赖、可真实运行的执行体：
- * `npm run agent:local`（即 playground/nova-local/index.mjs，端口 43110，模型
- * `nova-local-agent`），实现见该文件。自己接入时在这里追加一条登记即可，
- * 完整步骤见 `docs/local-agent.md`。
+ * 登记表只收真实端点：回复必须来自真实大模型，规则脚本的执行体
+ * （playground/nova-local，仅用于离线 e2e 测试）不进控制台。
+ * 自己接入时在这里追加一条登记即可，完整步骤见 `docs/local-agent.md`。
  */
 export const LOCAL_AGENTS: readonly LocalAgentEntry[] = [
-  {
-    id: "agt-local-nova",
-    name: "NOVA-LOCAL",
-    codename: "本地执行体",
-    model: "nova-local-agent",
-    owner: "本地开发",
-    version: "v1.1.0",
-    endpoint: "http://127.0.0.1:43110/v1",
-    apiKeyEnv: "LLM_API_KEY",
-    tagline:
-      "仓库自带的真实执行体：零依赖规则驱动，跑通检索—自愈—压缩—交卷全链路",
-    registeredAt: "2026-10-08T00:00:00.000Z",
-  },
   {
     // 真实大模型端点：值来自仓库根 .env 的 NOVA_LLM_BASE_URL / NOVA_LLM_MODEL，
     // 密钥经 apiKeyEnv 指到 NOVA_LLM_API_KEY（路由侧经统一配置兜底读到 .env 的值）。
