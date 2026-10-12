@@ -10,6 +10,7 @@ import {
   CircleCheck,
   CircleHelp,
   FileText,
+  ListTree,
   LoaderCircle,
   Pencil,
   Plus,
@@ -577,7 +578,7 @@ function VerificationConfig({
   return (
     <Card>
       <CardHeaderBlock title="验证配置" hint="勾选多个目标即并行对照验证" />
-      <CardContent className="space-y-3 py-4">
+      <CardContent className="space-y-3 py-3">
         <div className="space-y-2">
           <Label>目标 Agent</Label>
           {/* 等宽行 + max-h 封顶：档案多时区域内滚动，少时以内容为准 */}
@@ -991,7 +992,7 @@ function VerificationCases({
         title="验证用例"
         hint="点击即发送，看 Agent 的真实反应"
       />
-      <CardContent className="space-y-2 py-4">
+      <CardContent className="space-y-2 py-3">
         <CaseItem
           title="交叉验证调研"
           target="工具调用规范"
@@ -1259,8 +1260,14 @@ const VerificationCard = memo(function VerificationCard({
 }) {
   // thinking 块默认展开：全过程可见，用户可手动收起
   const [thinkingOpen, setThinkingOpen] = useState(true);
+  // 调用 trace 同样默认展开
+  const [traceOpen, setTraceOpen] = useState(true);
   const result = turn.result;
   const running = turn.status === "running";
+
+  // 思考（模型推理）与调用执行（模型调用 / 工具 / 平台动作）分桶
+  const thinkLogs = turn.logs.filter((log) => log.kind === "think");
+  const traceLogs = turn.logs.filter((log) => log.kind !== "think");
 
   // 执行中把最新一步亮出来：不用展开过程块也能看到 Agent 正在做什么
   const latestStep = running ? turn.logs.at(-1) : undefined;
@@ -1302,28 +1309,29 @@ const VerificationCard = memo(function VerificationCard({
           )}
         </div>
 
-        {/* 思考与执行过程（thinking 式：前置于回复） */}
+        {/* 执行中：最新一步实时可见 */}
+        {running && latestStep && (
+          <p className="nova-pulse rounded-lg border border-nova-accent/25 bg-nova-accent/6 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+            <span className="nova-mono-label mr-1.5 text-nova-accent/70">
+              #{latestStep.step}
+            </span>
+            {latestStep.message}
+          </p>
+        )}
+
+        {/* 思考过程：模型推理原文，独立分区 */}
         <div className="overflow-hidden rounded-lg border border-white/8 bg-white/2">
           <button
             type="button"
             onClick={() => setThinkingOpen(!thinkingOpen)}
             className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/3"
           >
-            {running ? (
-              <LoaderCircle className="size-3.5 animate-spin text-nova-cyan" />
-            ) : (
-              <BrainCircuit className="size-3.5 text-muted-foreground" />
-            )}
-            <span
-              className={cn(
-                "text-xs font-medium",
-                running ? "text-nova-cyan" : "text-muted-foreground",
-              )}
-            >
-              思考与执行过程
+            <BrainCircuit className="size-3.5 text-muted-foreground" />
+            <span className="text-xs font-medium text-muted-foreground">
+              思考过程
             </span>
             <span className="nova-mono-label text-[0.625rem] text-muted-foreground/70">
-              {turn.logs.length} 条事件
+              {thinkLogs.length} 条推理
             </span>
             <ChevronDown
               className={cn(
@@ -1332,21 +1340,45 @@ const VerificationCard = memo(function VerificationCard({
               )}
             />
           </button>
-
           {thinkingOpen && (
             <div className="border-t border-white/8 px-3 py-2">
-              {running && latestStep && (
-                <p className="nova-pulse mb-2 text-xs leading-relaxed text-muted-foreground">
-                  <span className="nova-mono-label mr-1.5 text-nova-accent/70">
-                    #{latestStep.step}
-                  </span>
-                  {latestStep.message}
-                </p>
-              )}
               <LogStream
-                logs={turn.logs}
-                className="min-h-14 max-h-64"
-                emptyHint="等待事件…"
+                logs={thinkLogs}
+                className="min-h-10 max-h-56"
+                emptyHint="本轮没有单独的推理输出（模型直接发起工具调用）"
+              />
+            </div>
+          )}
+        </div>
+
+        {/* 调用 Trace：模型调用与工具执行的完整时间线 */}
+        <div className="overflow-hidden rounded-lg border border-white/8 bg-white/2">
+          <button
+            type="button"
+            onClick={() => setTraceOpen(!traceOpen)}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-white/3"
+          >
+            <ListTree className="size-3.5 text-muted-foreground" />
+            <span className="text-xs font-medium text-muted-foreground">
+              调用 Trace
+            </span>
+            <span className="nova-mono-label text-[0.625rem] text-muted-foreground/70">
+              {traceLogs.length} 条 · 模型 {result?.usage.calls ?? "–"} 次 ·
+              工具 {result?.toolCalls.length ?? 0} 个
+            </span>
+            <ChevronDown
+              className={cn(
+                "ml-auto size-3 text-muted-foreground/70 transition-transform",
+                traceOpen && "rotate-180",
+              )}
+            />
+          </button>
+          {traceOpen && (
+            <div className="border-t border-white/8 px-3 py-2">
+              <LogStream
+                logs={traceLogs}
+                className="max-h-96"
+                emptyHint="等待调用事件…"
               />
             </div>
           )}
@@ -1397,7 +1429,7 @@ const VerificationCard = memo(function VerificationCard({
             </dl>
 
             {result.content ? (
-              <div className="rounded-lg border border-white/8 bg-white/3 px-3 py-2.5">
+              <div className="rounded-lg border border-white/8 bg-white/3 px-3 py-2">
                 <p className="nova-mono-label text-[0.625rem] text-nova-cyan/80">
                   Agent 回复
                 </p>
@@ -1842,7 +1874,7 @@ function Stat({
   accent?: "cyan" | "rose";
 }) {
   return (
-    <div className="nova-panel rounded-lg px-2.5 py-2">
+    <div className="nova-panel rounded-lg px-3 py-2">
       <dt className="text-[0.625rem] text-muted-foreground">{label}</dt>
       <dd
         className={cn(

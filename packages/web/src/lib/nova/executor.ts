@@ -179,6 +179,10 @@ export interface ConverseStep {
   message: string;
   /** 补充明细 */
   detail?: string;
+  /** 步骤种类：模型推理（think）/ 调用与工具执行（call）/ 平台动作（system） */
+  kind?: "think" | "call" | "system";
+  /** 本步骤实测耗时（毫秒）：模型调用与工具执行各带自己的耗时 */
+  durationMs?: number;
 }
 
 /** 一次工具调用的观测记录 */

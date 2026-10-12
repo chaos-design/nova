@@ -325,6 +325,8 @@ function stepToConverseLog(
     actor: step.actor,
     message: step.message,
     detail: step.detail,
+    kind: step.kind,
+    durationMs: step.durationMs,
   };
 }
 
