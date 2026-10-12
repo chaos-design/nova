@@ -208,7 +208,12 @@ export async function handleChat(body, deps = {}) {
   }
 
   const upstream = deps.upstream ?? callUpstream;
-  const payload = PERSONA.toUpstreamPayload(body, UPSTREAM_MODEL);
+  // 上游模型经 deps 可注入：生产恒跟随配置 agent.llm.model（换端点只动 .env），
+  // 测试注入固定值即可脱离 .env 做全量整形断言，CI 无 .env 也不漂移。
+  const payload = PERSONA.toUpstreamPayload(
+    body,
+    deps.upstreamModel ?? UPSTREAM_MODEL,
+  );
   const completion = toClientResponse(await upstream(payload), MODEL);
 
   if (!completion) {

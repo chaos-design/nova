@@ -227,6 +227,8 @@ describe("handleChat", () => {
     const completion = await handleChat(
       { model: "nova-coder-agent", messages: NOVA_MESSAGES, tools: TOOLS },
       {
+        // 注入固定上游模型：整形断言不再依赖 .env 的 NOVA_LLM_MODEL，CI 无 .env 也稳定
+        upstreamModel: "agnes-3.0-flash",
         upstream: async (payload) => {
           captured = payload;
           return upstreamOk;
