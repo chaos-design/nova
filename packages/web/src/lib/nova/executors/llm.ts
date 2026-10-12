@@ -147,7 +147,7 @@ export async function chatCompletion(
     if (error instanceof Error && error.name === "AbortError") throw error;
     throw new LlmError(
       `无法连接模型服务（${settings.baseUrl}）`,
-      "请检查 agent.llm.baseUrl（NOVA_LLM_BASE_URL）是否可访问，以及本机网络与代理设置。",
+      "请确认该 Agent 端点的服务是否已启动（本地领域 Agent 用 pnpm run agent:research / agent:coder 拉起），或检查 agent.llm.baseUrl 与本机网络、代理设置。",
     );
   } finally {
     clearTimeout(timer);
