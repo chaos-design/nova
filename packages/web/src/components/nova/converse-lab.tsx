@@ -71,6 +71,7 @@ import {
 import {
   type AgentProfile,
   type ConverseOverrides,
+  DEFAULT_SYSTEM_PROMPT,
   type LocalAgentEntry,
   localAgentProfile,
 } from "@/lib/nova";
@@ -269,23 +270,26 @@ export function ConverseLab({
     }
   };
 
-  // 自定义系统提示词：页头抽屉编辑，空 = 内置默认
-  const [systemPrompt, setSystemPrompt] = useState("");
+  // 系统提示词：抽屉里默认预填 NOVA 内置默认，可改可恢复；
+  // 与内置逐字一致时不落 key，继续跟随内置默认的演进
+  const [systemPrompt, setSystemPrompt] = useState(DEFAULT_SYSTEM_PROMPT);
   const [promptOpen, setPromptOpen] = useState(false);
   // 意图分发时消息先以气泡展示，识别完成后再创建验证轮
   const [pendingBubble, setPendingBubble] = useState<string | null>(null);
   useEffect(() => {
     try {
-      setSystemPrompt(window.localStorage.getItem(SYSTEM_PROMPT_KEY) ?? "");
+      const stored = window.localStorage.getItem(SYSTEM_PROMPT_KEY);
+      setSystemPrompt(stored?.trim() ? stored : DEFAULT_SYSTEM_PROMPT);
     } catch {
-      // 读不到保持默认
+      // 读不到保持内置默认
     }
   }, []);
   const saveSystemPrompt = (prompt: string) => {
-    setSystemPrompt(prompt);
+    const trackingDefault = prompt.trim() === DEFAULT_SYSTEM_PROMPT.trim();
+    setSystemPrompt(trackingDefault ? DEFAULT_SYSTEM_PROMPT : prompt);
     try {
-      if (prompt) window.localStorage.setItem(SYSTEM_PROMPT_KEY, prompt);
-      else window.localStorage.removeItem(SYSTEM_PROMPT_KEY);
+      if (trackingDefault) window.localStorage.removeItem(SYSTEM_PROMPT_KEY);
+      else window.localStorage.setItem(SYSTEM_PROMPT_KEY, prompt);
     } catch {
       // 写不进去只影响本次会话
     }
@@ -1944,7 +1948,7 @@ function PromptConfigDrawer({
 }) {
   const [draft, setDraft] = useState("");
   useEffect(() => {
-    if (open) setDraft(value);
+    if (open) setDraft(value || DEFAULT_SYSTEM_PROMPT);
   }, [open, value]);
 
   const overLimit = draft.length > SYSTEM_PROMPT_LIMIT;
@@ -1958,8 +1962,8 @@ function PromptConfigDrawer({
         <SheetHeader className="border-b border-white/8 px-4 pt-4 pb-3">
           <SheetTitle className="text-base">系统提示词</SheetTitle>
           <SheetDescription className="text-xs leading-relaxed">
-            留空使用 NOVA 内置默认提示词；内容随每轮请求透传，服务端校验后
-            仅在当次生效。
+            默认为 NOVA 内置提示词，可自由修改；内容随每轮请求透传，服务端
+            校验后仅在当次生效。
           </SheetDescription>
         </SheetHeader>
 
@@ -1968,7 +1972,7 @@ function PromptConfigDrawer({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             rows={18}
-            placeholder="自定义系统提示词…"
+            placeholder="自定义系统提示词…（默认已填入 NOVA 内置提示词）"
             className="min-h-96 resize-none font-mono text-xs"
           />
           <p
@@ -1986,7 +1990,7 @@ function PromptConfigDrawer({
             variant="outline"
             size="sm"
             className="text-xs"
-            onClick={() => setDraft("")}
+            onClick={() => setDraft(DEFAULT_SYSTEM_PROMPT)}
           >
             恢复默认
           </Button>
