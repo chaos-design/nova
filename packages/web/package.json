@@ -2,6 +2,7 @@
   "name": "@chaos-design/web",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "NOVA 控制台（Next.js 应用）",
   "scripts": {
     "dev": "node scripts/dev.mjs",

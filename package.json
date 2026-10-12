@@ -2,6 +2,7 @@
   "name": "@chaos-design/nova",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "NOVA monorepo 根（Next-gen Operational Verification for Agents）",
   "engines": {
     "node": ">=20.9.0"

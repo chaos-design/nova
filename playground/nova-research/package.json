@@ -2,6 +2,7 @@
   "name": "@chaos-design/nova-research",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "NOVA 领域专家 Agent：调研专员（OpenAI 兼容人格代理端点）",
   "type": "module",
   "exports": {
