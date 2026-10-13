@@ -118,7 +118,10 @@ export default async function AgentsPage() {
         </Card>
       )}
 
-      <Card id="local-agents" className="scroll-mt-24">
+      {/* 卡内嵌套的 LocalAgentCard 自带 CardFooter，shadcn Card 的
+          has-data-[slot=card-footer]:pb-0 是后代选择器，会误中嵌套卡脚、
+          把外层卡底部留白清零；用 ! 钉回 16px 与其他卡一致 */}
+      <Card id="local-agents" className="scroll-mt-24 pb-(--card-spacing)!">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ServerCog className="size-4 text-nova-accent" />

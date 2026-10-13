@@ -576,7 +576,7 @@ function VerificationConfig({
         }));
 
   return (
-    <Card>
+    <Card className="py-0">
       <CardHeaderBlock title="验证配置" hint="勾选多个目标即并行对照验证" />
       <CardContent className="space-y-3 py-3">
         <div className="space-y-2">
@@ -987,7 +987,7 @@ function VerificationCases({
   onPick: (text: string) => void;
 }) {
   return (
-    <Card>
+    <Card className="py-0">
       <CardHeaderBlock
         title="验证用例"
         hint="点击即发送，看 Agent 的真实反应"
@@ -1275,6 +1275,7 @@ const VerificationCard = memo(function VerificationCard({
   return (
     <Card
       className={cn(
+        "py-0",
         running && "border-nova-accent/30",
         turn.status === "failed" && "border-nova-rose/30",
       )}
@@ -1567,7 +1568,7 @@ function DraftComposer({
   const [modelMenu, setModelMenu] = useState(false);
 
   return (
-    <Card>
+    <Card className="py-0">
       {/* 对话式 IDE 输入卡：四边等距 padding */}
       <CardContent className="p-3">
         {(intentPending || runningCount > 0) && (
