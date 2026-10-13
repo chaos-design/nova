@@ -10,6 +10,7 @@
 
 ## 目录
 
+- [快捷通道（推荐路径）](#快捷通道推荐路径)
 - [1. NOVA 期望的 Agent 协议](#1-nova-期望的-agent-协议)
 - [2. 开发一个本地 Agent](#2-开发一个本地-agent)
 - [3. 注册进 NOVA](#3-注册进-nova)
@@ -19,6 +20,32 @@
 - [7. 指向真实模型服务（Ollama / vLLM / LM Studio）](#7-指向真实模型服务ollama--vllm--lm-studio)
 - [8. 诊断清单](#8-诊断清单)
 - [9. 边界与约束](#9-边界与约束)
+
+---
+
+## 快捷通道（推荐路径）
+
+从「想要一个 Agent」到「完成首轮验证」，推荐走工具化的三步，
+每步的产物都可验证；第 2 / 3 / 4 节的手工路径适合理解原理或做非标准接入。
+
+**第 1 步 · 生成**：`pnpm run agent:new -- --name nova-writer`
+一键生成 `playground/nova-writer/` 全套 —— 薄入口（复用
+`@chaos-design/agent-kit` 的配置引导 / 人格加载 / 上游调用 / HTTP 路由）、
+`persona.md` 骨架（XML 标签分节）、`agent.config.yaml`、package.json 与
+集成测试。名称做 `nova-` 前缀校验，id / 模型标识 / 端口自动避开既有登记
+（端口从 43113 起分配）。改 `persona.md` 里的〔占位〕为人格后，
+`pnpm install && pnpm --filter @chaos-design/nova-writer test` 即可冒烟。
+
+**第 2 步 · 登记**：启动端点后，在注册表页点「接入新 Agent」：
+探测会列出端点上的模型清单（点选即填），登记 id 与既有档案撞车时
+当场提示；确认后复制 `local-agents.ts` 片段与 `.env.local` 片段，
+提交登记（随仓库走，经 code review），重启 `npm run dev` 生效。
+
+**第 3 步 · 验证**：档案卡上点「快捷验证」，直达
+`/converse?agent=<id>&case=research` —— 自动选中该 Agent 并发起
+交叉验证调研用例；需要更系统的结论再去沙盒跑完整场景拿评分。
+意图分发验证：同时选中 NOVA-RESEARCH 与 NOVA-CODER、执行方式切
+「意图分发」，调研类消息应路由给调研专员、工程类消息应路由给工程搭档。
 
 ---
 
@@ -260,10 +287,15 @@ pnpm run agent:research   # http://127.0.0.1:43111/v1（模型 nova-research-age
 pnpm run agent:coder      # http://127.0.0.1:43112/v1（模型 nova-coder-agent）
 ```
 
+- 两个入口都是薄封装：配置引导、人格加载、上游调用与 OpenAI 兼容
+  路由全部来自 `packages/agent-kit`（`@chaos-design/agent-kit`），
+  本包只保留模型标识、端口与 `persona.md`；新领域 Agent 用
+  `pnpm run agent:new` 生成同样的结构（见「快捷通道」第 1 步）；
 - 已登记为 `agt-local-research` / `agt-local-coder`；
 - 两者职责互斥（调研 ↔ 工程），是 Converse Lab **意图分发**的验证对象：
   选定两个专家、执行方式切「意图分发」后，调研类消息应路由给
-  NOVA-RESEARCH，工程类消息应路由给 NOVA-CODER；
+  NOVA-RESEARCH，工程类消息应路由给 NOVA-CODER；意图分类的候选
+  领域描述取自登记条目的 `tagline`（协议 §4.1）；
 - 人格提示词独立在各包的 `persona.md`，用 XML 自定义标签分节
   （`<role>` / `<responsibility>` / `<workflow>` / `<tool-output-policy>`）：
   标签原文随提示词发给上游，启动时校验配对（缺文件 / 空文件 / 超 8000

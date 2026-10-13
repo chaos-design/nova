@@ -191,6 +191,34 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 落库（`.nova/runs.json`）发生在服务端收到 `done` 事件时
 （`route.ts:110-124`），客户端只读事件流。
 
+### 4.1 对话验证与意图分发（Converse Lab，观测路径）
+
+对话验证与意图分发共用一套 SSE 形态，事件是判别联合
+`ConverseEvent = meta | step | turn | error`（`executor.ts`）。这条路径
+**只观测不评分**：不写 run-store、不进排行榜，`turn` 里只有可观测后果
+（工具调用、token、延迟、注入命中标记）。
+
+| 路由 | 请求 | 行为 |
+| :--- | :--- | :--- |
+| `POST /api/agents/converse` | `{ agentId, history, userMessage, systemPrompt?, overrides? }` | 定点执行：档案按 `agentId` 服务端反查，历史整轮回传（无状态约定），流式返回一轮对话 |
+| `POST /api/agents/intent` | `{ text, agents: [{ id, name, model?, description? }] }` | 分类即服务：一次零温度 LLM 分类，返回 `{ agentId, output }`；单候选直接返回，不烧分类调用 |
+| `POST /api/agents/dispatch` | `{ text, agents, histories, systemPrompt?, overrides? }` | 分类 + 转发合一：服务端分类后直接驱动对话执行器；历史按候选分别携带（`histories[agentId]`），路由结果定了才取对应历史 |
+
+**意图分类的兜底语义（单发，绝不广播）**：解析逐级放宽——模型输出
+包含 id 原文 → 包含名称（均不区分大小写）→ 兜底落第一个候选
+（`lib/nova/intent.ts` 的 `parseIntentOutput`，服务端与单测共用）。
+无论解析结果如何，一条消息只投递给一个 Agent。`dispatch` 的分类
+失败不报错：落首个候选并在首个 `meta` 事件标注
+`dispatched: { fallback: true }`，客户端据此迁移会话分桶。
+
+候选与输入的上限（`intent.ts` / `converse-request.ts`）：候选 ≤ 10、
+单条 `description`（领域描述，来自登记 `tagline`）≤ 200 字符、
+用户消息 ≤ 2000 字符、历史 ≤ 24 条、请求体 ≤ 32KB；分类超时 15s
+（`INTENT_TIMEOUT_MS`），超时按分类失败走兜底。
+
+`/api/agents/intent` 保留为回退路径：dispatch 故障时客户端可退回
+「先分类、后定点执行」的两步编排。
+
 ## 5. 安全边界
 
 ### 5.1 探针（`GET {endpoint}/models` 的发起方 = NOVA 服务端）
@@ -267,7 +295,9 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 
 ## 8. 版本与变更流程
 
-- 本协议版本 **v1.0**（2026-10-10）固化当前实现；
+- 本协议版本 **v1.1**（2026-10-13）—— v1.0（2026-10-10）固化对接契约后，
+  v1.1 新增控制台侧的对话验证 / 意图分发事件与路由（§4.1），Agent 侧
+  端点契约（§1–§3、§5）未变；
 - 变更级别：**格式变更**（工具 Schema、SSE 事件联合、故障文案结构、端点契约）
   必须升协议版本并同步 §9 对应表；**文案微调**（提示词措辞）随代码提交即可；
 - 涉及评分口径的任何变更必须同步 `docs/nova-standard.md`（`AGENTS.md` 约束 5），
@@ -283,6 +313,7 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 | §3.2 工具 Schema | `lib/nova/executors/tools.ts:38-86` |
 | §3.3 故障回传格式 | `lib/nova/executors/tools.ts:161-226`；`live.ts:391-463` |
 | §4 SSE 事件 | `lib/nova/executor.ts:91-104`；`api/sandbox/run/route.ts:84-152` |
+| §4.1 对话验证 / 意图分发 | `lib/nova/intent.ts`（parseIntentOutput）；`api/agents/intent/route.ts`；`api/agents/dispatch/route.ts`；`api/agents/converse/route.ts`；`executors/converse-request.ts`（共享校验） |
 | §5.1 探针安全 | `api/agents/probe/route.ts:15-41,107-197` |
 | §5.2 沙盒路由约束 | `api/sandbox/run/route.ts:19-234` |
 | §5.3 密钥 / 待验证口径 | `lib/nova/local-agents.ts:38-43,77-118`；`lib/nova/run-store.ts` → `verifiedAgents` |

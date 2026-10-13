@@ -14,6 +14,7 @@
 | :--- | :--- | :--- |
 | `packages/web` | `@chaos-design/web` | NOVA 控制台（Next.js 应用） |
 | `packages/nova-config` | `@chaos-design/config` | 共享配置加载器（纯 Node ESM，被 web 与 Agent 共用） |
+| `packages/agent-kit` | `@chaos-design/agent-kit` | 领域 Agent 共享基建：persona 层 + OpenAI 兼容服务骨架（playground 各执行体与脚手架产物复用） |
 | `playground/nova-local` | `@chaos-design/nova-local` | 本地验证用 OpenAI 兼容 Agent 服务（规则执行体，不进控制台） |
 | `playground/nova-research` | `@chaos-design/nova-research` | 领域专家 Agent：调研专员（真实大模型人格代理，端口 43111） |
 | `playground/nova-coder` | `@chaos-design/nova-coder` | 领域专家 Agent：工程搭档（调研专员的意图分发对照，端口 43112） |
