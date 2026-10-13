@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildIntentPrompt,
   INTENT_DESCRIPTION_MAX_CHARS,
@@ -6,6 +6,7 @@ import {
   INTENT_MAX_TEXT_CHARS,
   type IntentCandidate,
   parseIntentOutput,
+  resolveDispatchTarget,
   sanitizeIntentCandidates,
 } from "@/lib/nova";
 
@@ -166,5 +167,60 @@ describe("buildIntentPrompt", () => {
       true,
     );
     expect(messageLine.length).toBeLessThan(INTENT_MAX_TEXT_CHARS + 100);
+  });
+});
+
+describe("resolveDispatchTarget", () => {
+  it("单候选直落：不调用分类器，省一次模型调用", async () => {
+    const classify = vi.fn();
+    const routed = await resolveDispatchTarget(
+      "任意消息",
+      [CANDIDATES[0]],
+      classify,
+    );
+
+    expect(routed).toEqual({ agentId: "agt-local-research", fallback: false });
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it("多候选分类成功：采用分类器的结论且不标注 fallback", async () => {
+    const classify = vi.fn(async () => ({
+      agentId: "agt-local-coder",
+      output: "agt-local-coder",
+      matchedBy: "id" as const,
+    }));
+    const routed = await resolveDispatchTarget(
+      "帮我改 bug",
+      CANDIDATES,
+      classify,
+    );
+
+    expect(routed).toEqual({ agentId: "agt-local-coder", fallback: false });
+    expect(classify).toHaveBeenCalledWith("帮我改 bug", CANDIDATES);
+  });
+
+  it("分类失败（含超时）：兜底单发首个候选并标注 fallback，绝不广播", async () => {
+    const classify = vi.fn(async () => {
+      throw new Error("无法连接模型服务");
+    });
+    const routed = await resolveDispatchTarget(
+      "任意消息",
+      CANDIDATES,
+      classify,
+    );
+
+    expect(routed).toEqual({ agentId: "agt-local-research", fallback: true });
+  });
+
+  it("兜底结论始终落在候选清单内", async () => {
+    const routed = await resolveDispatchTarget(
+      "任意消息",
+      CANDIDATES,
+      async () => {
+        throw new Error("boom");
+      },
+    );
+
+    expect(CANDIDATES.map((item) => item.id)).toContain(routed.agentId);
   });
 });

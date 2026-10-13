@@ -152,3 +152,35 @@ export function buildIntentPrompt(
 function includesIgnoreCase(haystack: string, needle: string): boolean {
   return haystack.toLowerCase().includes(needle.toLowerCase());
 }
+
+/** 分类器形状：dispatch 路由只依赖这一个调用签名，便于注入桩做单测 */
+export type IntentClassifier = (
+  text: string,
+  candidates: readonly IntentCandidate[],
+) => Promise<IntentResolution>;
+
+/**
+ * 意图分发的路由决策：单候选直落，多候选分类、失败兜底首个。
+ *
+ * 把「兜底单发」的接线从 dispatch route 里抽出来，让这条关键
+ * 语义可以脱离 server-only 模块做单测（真实分类器由调用方注入，
+ * 路由本身只关心：分类给出什么就用什么；分类挂了就单发首个并
+ * 标注 fallback——绝不广播）。
+ */
+export async function resolveDispatchTarget(
+  text: string,
+  candidates: readonly IntentCandidate[],
+  classify: IntentClassifier,
+): Promise<{ agentId: string; fallback: boolean }> {
+  if (candidates.length <= 1) {
+    // 单候选没有分类价值：直接返回，省一次模型调用
+    return { agentId: candidates[0].id, fallback: false };
+  }
+
+  try {
+    const resolved = await classify(text, candidates);
+    return { agentId: resolved.agentId, fallback: false };
+  } catch {
+    return { agentId: candidates[0].id, fallback: true };
+  }
+}

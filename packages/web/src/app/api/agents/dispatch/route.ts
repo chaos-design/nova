@@ -4,6 +4,7 @@ import {
   localAgentById,
   localAgentProfile,
   normalizeEndpoint,
+  resolveDispatchTarget,
   sanitizeIntentCandidates,
 } from "@/lib/nova";
 import { runConverseTurn } from "@/lib/nova/executors/converse";
@@ -16,7 +17,7 @@ import {
   validateUserMessage,
 } from "@/lib/nova/executors/converse-request";
 import { classifyAgentIntent } from "@/lib/nova/executors/intent-classify";
-import { LlmError, readLlmSettings } from "@/lib/nova/executors/llm";
+import { readLlmSettings } from "@/lib/nova/executors/llm";
 
 /**
  * 意图分发 + 转发接口（分类与执行合一）。
@@ -91,22 +92,13 @@ export async function POST(request: Request) {
     );
   }
 
-  // --- 意图分类：失败按约定落首个候选，流照常建立 ---
-  let routedTo = candidates[0].id;
-  let fallback = false;
-
-  if (candidates.length > 1) {
-    try {
-      const resolved = await classifyAgentIntent(
-        userMessage.value,
-        candidates,
-        readLlmSettings(),
-      );
-      routedTo = resolved.agentId;
-    } catch {
-      fallback = true;
-    }
-  }
+  // --- 意图分类：兜底单发语义在 resolveDispatchTarget（可单测），失败落首个候选 ---
+  const settings = readLlmSettings();
+  const { agentId: routedTo, fallback } = await resolveDispatchTarget(
+    userMessage.value,
+    candidates,
+    (text, cands) => classifyAgentIntent(text, cands, settings),
+  );
 
   const localEntry = localAgentById(routedTo);
 
