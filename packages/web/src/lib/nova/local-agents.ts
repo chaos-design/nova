@@ -48,13 +48,44 @@ export interface LocalAgentEntry {
 }
 
 /**
+ * e2e 专用登记（仅 `NOVA_E2E=1` 进程内存在，正常启动恒为空）。
+ *
+ * scripts/e2e.mjs 要走通「探测 → 沙盒 → 落库 → 页面」全链路，需要一个
+ * 登记在案且**离线可跑**的 Agent，而 nova-local 是规则执行体、不满足
+ * 「只收真实大模型端点」的登记口径。环境变量门控让两者兼容：端到端
+ * 验证自己拉起的控制台带上 NOVA_E2E=1，它才出现在登记表里；用户自起
+ * 的 dev server 与生产构建永远看不到这条档案。
+ */
+const E2E_AGENTS: readonly LocalAgentEntry[] =
+  process.env.NOVA_E2E === "1"
+    ? [
+        {
+          id: "agt-local-nova",
+          name: "NOVA-LOCAL",
+          codename: "离线执行体",
+          model: "nova-local-agent",
+          owner: "e2e",
+          version: "v0.1.0",
+          endpoint: "http://127.0.0.1:43110/v1",
+          // nova-local 无鉴权：变量名仅满足登记结构，执行器读不到值就不带 Authorization
+          apiKeyEnv: "LLM_API_KEY",
+          tagline:
+            "离线规则执行体（仅 NOVA_E2E=1 进程可见）：端到端验证的确定性被测对象，不是真实大模型端点",
+          registeredAt: "2026-10-10T00:00:00.000Z",
+        },
+      ]
+    : [];
+
+/**
  * 已登记的本地 Agent。
  *
  * 这是 NOVA 唯一的数据来源：界面上的档案、评分、榜单全部由这里登记的
  * Agent 真实跑出来的运行记录派生，没有任何预置档案。
  *
  * 登记表只收真实端点：回复必须来自真实大模型，规则脚本的执行体
- * （playground/nova-local，仅用于离线 e2e 测试）不进控制台。
+ * （playground/nova-local）不进正常启动的控制台 —— 它只在
+ * `NOVA_E2E=1` 的端到端验证进程里临时登记（见上方的 E2E_AGENTS），
+ * 供 scripts/e2e.mjs 离线走通全链路。
  * 自己接入时在这里追加一条登记即可，完整步骤见 `docs/local-agent.md`。
  */
 export const LOCAL_AGENTS: readonly LocalAgentEntry[] = [
@@ -123,6 +154,8 @@ export const LOCAL_AGENTS: readonly LocalAgentEntry[] = [
       "专职工程实现的领域 Agent：编码、调试与脚本验证，与调研员构成意图分发对照（playground/nova-coder）",
     registeredAt: "2026-10-11T00:00:00.000Z",
   },
+  // e2e 门控登记放最后：正常启动展开为空，端到端验证进程才有离线执行体
+  ...E2E_AGENTS,
 ];
 
 /** 按 id 查本地 Agent，找不到返回 undefined（不抛错：登记是可选注入） */
