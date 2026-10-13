@@ -16,6 +16,7 @@
     "dev:coder": "pnpm --filter @chaos-design/nova-coder start",
     "agent:coder": "pnpm run dev:coder",
     "dev:all": "node scripts/dev-all.mjs",
+    "agent:new": "node scripts/scaffold-agent.mjs",
     "build": "pnpm --filter @chaos-design/web build",
     "start": "pnpm --filter @chaos-design/web start",
     "config:check": "node scripts/check-config.mjs",
