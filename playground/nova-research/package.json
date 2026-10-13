@@ -6,8 +6,7 @@
   "description": "NOVA 领域专家 Agent：调研专员（OpenAI 兼容人格代理端点）",
   "type": "module",
   "exports": {
-    ".": "./index.mjs",
-    "./persona": "./persona.mjs"
+    ".": "./index.mjs"
   },
   "scripts": {
     "start": "node index.mjs",
@@ -16,6 +15,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@chaos-design/agent-kit": "workspace:*",
     "@chaos-design/config": "workspace:*"
   },
   "devDependencies": {
