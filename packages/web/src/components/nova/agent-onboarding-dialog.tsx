@@ -133,9 +133,8 @@ export function AgentOnboardingDialog() {
   const stepIndex = STEPS.findIndex((item) => item.id === step);
 
   /** 与内置档案重名会让 id 撞车，这里提前拦下而不是让用户提交后才报错 */
-  const conflicting = LOCAL_AGENTS.some(
-    (item) => item.id === deriveAgentId(form.name),
-  );
+  const conflictingEntry =
+    LOCAL_AGENTS.find((item) => item.id === deriveAgentId(form.name)) ?? null;
 
   const entry = useMemo<LocalAgentEntry>(
     () => ({
@@ -158,7 +157,7 @@ export function AgentOnboardingDialog() {
     form.name.trim().length > 0 &&
     form.model.trim().length > 0 &&
     normalizeEndpoint(form.endpoint).length > 0 &&
-    !conflicting;
+    !conflictingEntry;
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -265,6 +264,7 @@ export function AgentOnboardingDialog() {
               probe={probe}
               probing={probing}
               onProbe={runProbe}
+              conflictingEntry={conflictingEntry}
             />
           )}
 
@@ -401,15 +401,26 @@ function ProfileStep({
   probe,
   probing,
   onProbe,
+  conflictingEntry,
 }: {
   form: FormState;
   onChange: <K extends keyof FormState>(key: K, value: FormState[K]) => void;
   probe: EndpointProbe | null;
   probing: boolean;
   onProbe: () => void;
+  /** id 与既有登记撞车的档案（null = 无冲突） */
+  conflictingEntry: LocalAgentEntry | null;
 }) {
   return (
     <div className="space-y-5">
+      {conflictingEntry && (
+        <p className="rounded-lg border border-nova-amber/30 bg-nova-amber/8 px-3 py-2 text-xs leading-relaxed text-nova-amber">
+          登记 id <code className="font-mono">{conflictingEntry.id}</code>{" "}
+          已被「{conflictingEntry.codename}」占用 ——
+          换一个英文代号，否则新档案会覆盖不了旧档案。
+        </p>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2">
         <Field
           id="name"
@@ -418,7 +429,11 @@ function ProfileStep({
           value={form.name}
           placeholder="MYAGENT"
           onChange={(value) => onChange("name", value)}
-          hint={`登记 id 将是 ${deriveAgentId(form.name)}`}
+          hint={
+            conflictingEntry
+              ? `⚠ id 冲突：${conflictingEntry.id}`
+              : `登记 id 将是 ${deriveAgentId(form.name)}`
+          }
         />
         <Field
           id="codename"
@@ -458,6 +473,30 @@ function ProfileStep({
           onChange={(value) => onChange("apiKeyEnv", value)}
           hint="只存变量名，密钥本身留在 .env.local"
         />
+        {probe && probe.models.length > 0 && (
+          <div className="space-y-1.5 sm:col-span-2">
+            <p className="text-[0.6875rem] text-muted-foreground/70">
+              端点探测到的模型，点选即填：
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {probe.models.slice(0, 8).map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => onChange("model", id)}
+                  className={cn(
+                    "rounded-full border px-2.5 py-0.5 font-mono text-[0.6875rem] transition-colors",
+                    form.model === id
+                      ? "border-nova-accent bg-nova-accent/15 text-nova-accent"
+                      : "border-white/12 text-muted-foreground hover:border-nova-accent/40 hover:text-foreground",
+                  )}
+                >
+                  {id}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -606,8 +645,16 @@ function PublishStep({
           注册表会多出这张档案卡。
         </p>
         <p>
-          档案登记只是入册：NOVA 不会凭空给它一个评分。未跑完验证之前，
-          它不会进入排行榜与能力矩阵 —— 缺的是数据，不是展示位。
+          重启后到档案卡点「快捷验证」：探针与冒烟用例一次跑完，先看它
+          能不能接住对话；需要评分再去沙盒跑完整场景 —— 档案登记只是入册， NOVA
+          不会凭空给分，未跑完验证前它不进排行榜与能力矩阵。
+        </p>
+        <p>
+          还没有现成端点？{" "}
+          <code className="font-mono text-nova-cyan">
+            pnpm run agent:new -- --name nova-xxx
+          </code>{" "}
+          一键生成领域 Agent 骨架，改 persona.md 就能用。
         </p>
       </div>
     </div>
