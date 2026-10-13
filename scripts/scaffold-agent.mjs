@@ -124,7 +124,6 @@ function scanPlaygroundPorts() {
 
 const personaTemplate = (
   codename,
-  suffix,
 ) => `<!-- ${codename} 的人格提示词：XML 自定义标签分节，标签原文会随请求发给上游大模型。 -->
 
 <role>
@@ -144,12 +143,7 @@ const personaTemplate = (
 </style>
 `;
 
-const entryTemplate = (
-  codename,
-  suffix,
-  ownedBy,
-  className,
-) => `#!/usr/bin/env node
+const entryTemplate = (codename, ownedBy, className) => `#!/usr/bin/env node
 
 /**
  * ${className} 入口：${codename}的 OpenAI 兼容人格代理端点。
@@ -248,7 +242,7 @@ agent:
 `;
 
 const packageJsonTemplate = (suffix, codename) =>
-  JSON.stringify(
+  `${JSON.stringify(
     {
       name: `@chaos-design/nova-${suffix}`,
       version: "0.1.0",
@@ -274,7 +268,7 @@ const packageJsonTemplate = (suffix, codename) =>
     },
     null,
     2,
-  ) + "\n";
+  )}\n`;
 
 const vitestConfigTemplate = `import { getConfig } from "@chaos-design/config";
 import { defineConfig } from "vitest/config";
@@ -518,8 +512,8 @@ mkdirSync(join(targetDir, "tests"), { recursive: true });
 const files = [
   ["package.json", packageJsonTemplate(suffix, codename)],
   ["agent.config.yaml", agentConfigTemplate(model, port, envName)],
-  ["index.mjs", entryTemplate(codename, suffix, name, name)],
-  ["persona.md", personaTemplate(codename, suffix)],
+  ["index.mjs", entryTemplate(codename, name, name)],
+  ["persona.md", personaTemplate(codename)],
   ["vitest.config.ts", vitestConfigTemplate],
   ["tests/agent-entry.test.ts", entryTestTemplate(model, name, codename)],
 ];
