@@ -149,6 +149,9 @@ e2e 与发布脚本都经 `@chaos-design/config` 读取，不各自解析。
    开发/接入步骤见 `docs/local-agent.md`。
 7. **`src/components/ui/` 与 `nova-theme.css` 的 lint 豁免写在根 `biome.json`**，
    路径前缀是 `packages/web/`。新增豁免时保持同风格，不要下沉到包内再放一份。
+   `packages/web/tsconfig.json` 同理不可被 biome 检查：它由 `next typegen` /
+   `next dev` 自动重写（展开数组、追加 include），格式化口径不由我们决定 ——
+   让 biome 与 Next 互相覆盖只会让 CI 反复红。
 
 ---
 
