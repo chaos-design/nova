@@ -45,6 +45,147 @@ export interface DispatchCandidate {
   description?: string;
 }
 
+/* -------------------------------------------------------------------------- */
+/* 会话落盘（localStorage）                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * 会话是**累计观测记录**：刷新页面不该等于把验证过程扔掉。
+ *
+ * 存在浏览器本地而不是服务端，理由与 AGENTS.md 的服务端专属存储一致 ——
+ * 对话验证本来就是纯观测路径、不进评分体系，把它写进 `.nova/runs.json`
+ * 反而会让"观测"与"评分记录"混在一处。代价是换设备就看不到，这对
+ * 一个本地自托管的控制台是可接受的。
+ */
+const SESSIONS_KEY = "nova:converse:sessions";
+
+/**
+ * 每个 Agent 保留的轮次上限：会话是"累计的近期过程"，不是归档 ——
+ * 留 30 轮足够回看，同时把单份存储压在 5MB 配额的安全区内
+ * （单轮体积主要由日志决定，见下一条上限）。
+ */
+const MAX_STORED_TURNS = 30;
+/** 单轮保留的日志条数上限：事件流看尾部最关键 */
+const MAX_STORED_LOGS = 60;
+/** 写盘节流：流式执行期间事件很密，攒住再写 */
+const PERSIST_DEBOUNCE_MS = 600;
+
+/** 落盘前归一：running 是"当时页面还开着"的残留，刷新后如实记为已中止 */
+function toPersistedTurn(turn: ConverseTurn): ConverseTurn {
+  return {
+    ...turn,
+    status: turn.status === "running" ? "stopped" : turn.status,
+    logs: turn.logs.slice(-MAX_STORED_LOGS),
+  };
+}
+
+/** 会话 → 可落盘形状；turnsLimit 用于配额撞墙后的降级重试 */
+function toPersisted(
+  sessions: Record<string, ConverseTurn[]>,
+  turnsLimit = MAX_STORED_TURNS,
+): Record<string, ConverseTurn[]> {
+  const next: Record<string, ConverseTurn[]> = {};
+  for (const [agentId, turns] of Object.entries(sessions)) {
+    if (turns.length === 0) continue;
+    next[agentId] = turns.slice(-turnsLimit).map(toPersistedTurn);
+  }
+  return next;
+}
+
+/** 写一次；失败（配额满 / 隐私模式）返回 false 由调用方决定是否降级 */
+function writeSessions(sessions: Record<string, ConverseTurn[]>): boolean {
+  try {
+    window.localStorage.setItem(
+      SESSIONS_KEY,
+      JSON.stringify({ version: 1, sessions }),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 落盘：撞配额就砍一半历史再试，仍失败则放弃本次写入（下次变更还会再试） */
+function persistSessions(sessions: Record<string, ConverseTurn[]>): void {
+  if (typeof window === "undefined") return;
+  if (writeSessions(toPersisted(sessions))) return;
+  writeSessions(
+    toPersisted(sessions, Math.max(1, Math.floor(MAX_STORED_TURNS / 2))),
+  );
+}
+
+/** 逐条校验并归一外部数据；损坏的轮次直接丢弃而不是让整份会话作废 */
+function sanitizeStoredTurn(raw: unknown): ConverseTurn | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const record = raw as Record<string, unknown>;
+  const id = typeof record.id === "string" ? record.id : "";
+  const agentId = typeof record.agentId === "string" ? record.agentId : "";
+  const userText = typeof record.userText === "string" ? record.userText : "";
+  if (!id || !agentId || !userText) return null;
+
+  const status = record.status;
+  return {
+    id,
+    agentId,
+    createdAt:
+      typeof record.createdAt === "number" && Number.isFinite(record.createdAt)
+        ? record.createdAt
+        : Date.now(),
+    userText,
+    // 落盘时已被归一为终态；读到 running 只可能是手工改过，按已中止处理
+    status: status === "completed" || status === "failed" ? status : "stopped",
+    logs: Array.isArray(record.logs)
+      ? (record.logs as SimulationLog[]).slice(-MAX_STORED_LOGS)
+      : [],
+    result:
+      typeof record.result === "object" && record.result !== null
+        ? (record.result as ConverseTurn["result"])
+        : null,
+    error:
+      typeof record.error === "object" && record.error !== null
+        ? (record.error as ConverseTurn["error"])
+        : null,
+  };
+}
+
+/** 读回会话；损坏或缺失一律回退为空，绝不因为一份坏数据白屏 */
+function loadStoredSessions(): Record<string, ConverseTurn[]> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(SESSIONS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as { sessions?: unknown } | null;
+    const sessions = parsed?.sessions;
+    if (typeof sessions !== "object" || sessions === null) return {};
+
+    const restored: Record<string, ConverseTurn[]> = {};
+    for (const [agentId, turns] of Object.entries(
+      sessions as Record<string, unknown>,
+    )) {
+      if (!Array.isArray(turns)) continue;
+      const valid = turns
+        .map(sanitizeStoredTurn)
+        .filter((turn): turn is ConverseTurn => turn !== null);
+      if (valid.length > 0) restored[agentId] = valid;
+    }
+    return restored;
+  } catch {
+    return {};
+  }
+}
+
+/** 已落盘轮次 id 的序号：新轮次从这里续接，避免 id 与历史撞车 */
+function maxSeqOf(sessions: Record<string, ConverseTurn[]>): number {
+  let max = 0;
+  for (const turns of Object.values(sessions)) {
+    for (const turn of turns) {
+      const seq = Number(turn.id.slice(turn.id.lastIndexOf("-") + 1));
+      if (Number.isFinite(seq) && seq > max) max = seq;
+    }
+  }
+  return max;
+}
+
 /** 意图分发单次请求的选项 */
 export interface DispatchOptions {
   /**
@@ -72,6 +213,9 @@ export interface DispatchOptions {
  *
  * 历史只由**成功完成的轮次**拼出：失败轮不确定是否被 Agent 读到，
  * 拼进去会让"没送达的话"参与下一轮决策。
+ *
+ * 会话**累计落盘**到 localStorage：刷新页面、切走再回来都还看得到
+ * 之前跑过的轮次（落盘时机与上限见文件顶部的会话落盘小节）。
  */
 export function useConverse() {
   const [sessions, setSessions] = useState<Record<string, ConverseTurn[]>>({});
@@ -95,6 +239,38 @@ export function useConverse() {
     },
     [],
   );
+
+  // 会话落盘：首帧与 SSR 一致（空会话），挂载后读回历史再开始写盘。
+  // hydrated 必须等到读回的结果**已经提交**才置真，否则首次 effect 会拿
+  // 空会话覆盖掉存储（那正是"刷新即丢"的另一种写法）。
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    const restored = loadStoredSessions();
+    if (Object.keys(restored).length > 0) {
+      setSessions(restored);
+      // 轮次 id 由序号派生，续接已落盘的序号才不会与新轮次撞车
+      turnSeqRef.current = maxSeqOf(restored);
+    }
+    setHydrated(true);
+  }, []);
+
+  // 落盘时机分两档：全部轮次落定时立即写（刷新不丢刚跑完的结论），
+  // 流式执行中按节流写（每个 step 事件都写盘没有必要）
+  useEffect(() => {
+    if (!hydrated) return;
+    const settled = Object.values(sessions).every((turns) =>
+      turns.every((turn) => turn.status !== "running"),
+    );
+    if (settled) {
+      persistSessions(sessions);
+      return;
+    }
+    const timer = setTimeout(
+      () => persistSessions(sessions),
+      PERSIST_DEBOUNCE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [sessions, hydrated]);
 
   /** 用已完成的轮次拼出本轮回发的完整对话上下文 */
   const buildHistory = useCallback(

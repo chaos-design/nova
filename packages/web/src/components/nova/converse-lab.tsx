@@ -12,28 +12,19 @@ import {
   FileText,
   ListTree,
   LoaderCircle,
-  Pencil,
   Plus,
   RotateCcw,
   ShieldAlert,
   Square,
-  Trash2,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
+import { LlmConfigDialog } from "@/components/nova/llm-config-dialog";
 import { LogStream } from "@/components/nova/log-stream";
 import { MarkdownText } from "@/components/nova/markdown-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,7 +38,6 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -69,96 +59,24 @@ import {
   sessionTotalsOf,
   useConverse,
 } from "@/hooks/use-converse";
+import { useLlmProfiles } from "@/hooks/use-llm-profiles";
 import {
   type AgentProfile,
   CONVERSE_CASES,
-  type ConverseOverrides,
   converseCaseByKey,
   DEFAULT_SYSTEM_PROMPT,
+  type LlmConnectionProfile,
+  type LlmEnvDefault,
   type LocalAgentEntry,
   localAgentProfile,
   QUICK_VERIFY_CASE_KEY,
 } from "@/lib/nova";
 
-/** 一条模型连接配置（浏览器 localStorage 管理的档案） */
-export interface AgentConnectionProfile {
-  id: string;
-  /** 展示名，如「.env 默认」「Agnes 直连」 */
-  name: string;
-  endpoint: string;
-  model: string;
-  /** 留空 = 沿用 .env 的 NOVA_LLM_API_KEY */
-  apiKey?: string;
-}
-
-/** 内置档案：沿用登记条目 / .env，不出现在 localStorage 里、不可编辑删除 */
-const ENV_PROFILE_ID = "__env__";
-
-const PROFILES_STORAGE_KEY = "nova:converse:profiles";
-const ACTIVE_PROFILE_KEY = "nova:converse:active-profile";
 const EXEC_MODE_KEY = "nova:converse:exec-mode";
 /** 自定义系统提示词的 localStorage 键；空 = 使用 NOVA 内置默认 */
 const SYSTEM_PROMPT_KEY = "nova:converse:system-prompt";
 /** 服务端对系统提示词的长度上限（route 侧会再截断一次） */
 const SYSTEM_PROMPT_LIMIT = 8_000;
-/** 旧版单配置键：读到时迁移为一条档案后废弃 */
-const LEGACY_OVERRIDES_KEY = "nova:converse:agent-overrides";
-
-/** 从 localStorage 读配置档案列表与激活 id；损坏或缺失一律回退为空 */
-function loadStoredProfiles(): {
-  profiles: AgentConnectionProfile[];
-  activeId: string | null;
-} {
-  if (typeof window === "undefined") return { profiles: [], activeId: null };
-  try {
-    const raw = window.localStorage.getItem(PROFILES_STORAGE_KEY);
-    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
-    const profiles = Array.isArray(parsed)
-      ? parsed.filter(
-          (item): item is AgentConnectionProfile =>
-            typeof item === "object" &&
-            item !== null &&
-            typeof (item as AgentConnectionProfile).id === "string" &&
-            typeof (item as AgentConnectionProfile).name === "string",
-        )
-      : [];
-    const activeId = window.localStorage.getItem(ACTIVE_PROFILE_KEY);
-
-    // 旧版单配置迁移：变成一条档案并激活，之后废弃旧键
-    if (
-      profiles.length === 0 &&
-      window.localStorage.getItem(LEGACY_OVERRIDES_KEY)
-    ) {
-      try {
-        const legacy = JSON.parse(
-          window.localStorage.getItem(LEGACY_OVERRIDES_KEY) ?? "{}",
-        ) as Record<string, unknown>;
-        if (legacy.endpoint && legacy.model) {
-          const migrated: AgentConnectionProfile = {
-            id: `profile-${Date.now()}`,
-            name: "自定义配置",
-            endpoint: String(legacy.endpoint),
-            model: String(legacy.model),
-            apiKey: legacy.apiKey ? String(legacy.apiKey) : undefined,
-          };
-          window.localStorage.setItem(
-            PROFILES_STORAGE_KEY,
-            JSON.stringify([migrated]),
-          );
-          window.localStorage.setItem(ACTIVE_PROFILE_KEY, migrated.id);
-          window.localStorage.removeItem(LEGACY_OVERRIDES_KEY);
-          return { profiles: [migrated], activeId: migrated.id };
-        }
-      } catch {
-        // 旧键损坏：忽略，按空档案处理
-      }
-    }
-
-    return { profiles, activeId: activeId || null };
-  } catch {
-    return { profiles: [], activeId: null };
-  }
-}
 
 /**
  * 对话验证台（Converse Lab）——验证优先的布局。
@@ -173,6 +91,7 @@ function loadStoredProfiles(): {
 export function ConverseLab({
   agents,
   localAgents = [],
+  llmDefault,
   initialAgentId,
   initialCaseKey,
 }: {
@@ -180,6 +99,8 @@ export function ConverseLab({
   agents: readonly AgentProfile[];
   /** 已登记的本地 Agent（端点与密钥变量名在这里） */
   localAgents?: readonly LocalAgentEntry[];
+  /** 本地 .env 解析出的全局大模型默认连接（密钥不下发） */
+  llmDefault: LlmEnvDefault;
   /** 深链 ?agent=<id>：快捷验证自动选中的目标（由服务端页面解析后传入） */
   initialAgentId?: string;
   /** 深链 ?case=<key>：自动发起的用例；缺省用快捷验证默认用例 */
@@ -229,7 +150,6 @@ export function ConverseLab({
       return agents.find((item) => item.id === id) ?? null;
     })
     .filter((agent): agent is AgentProfile => agent !== null);
-  const localEntry = localAgents.find((item) => item.id === targetIds[0]);
 
   // 验证记录流新增轮次 / 事件 / 结论时跟随到底部；容器只在 xl 断点滚动，
   // 其余断点页面整体滚动，这里赋值无害
@@ -249,10 +169,9 @@ export function ConverseLab({
     setPendingBubble(null);
   }, [turns.length]);
 
-  // 连接配置档案：首帧与 SSR 一致（内置 .env 默认），挂载后再读 localStorage，
-  // 避免 hydration 不一致
-  const [profiles, setProfiles] = useState<AgentConnectionProfile[]>([]);
-  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  // 全局大模型连接配置：与沙盒模拟器共用同一份档案（默认取本地 .env）；
+  // 首帧与 SSR 一致，挂载后由 hook 读 localStorage，避免 hydration 不一致
+  const llm = useLlmProfiles(llmDefault);
   // 「模型配置」弹窗可由模型下拉里的入口打开
   const [editorOpen, setEditorOpen] = useState(false);
   // 多目标执行方式：同时执行 = 广播全部；意图分发 = 真实 LLM 分类后
@@ -261,9 +180,6 @@ export function ConverseLab({
   // 意图分发请求进行中：横幅显示「意图识别中…」
   const [intentPending, setIntentPending] = useState(false);
   useEffect(() => {
-    const stored = loadStoredProfiles();
-    setProfiles(stored.profiles);
-    setActiveProfileId(stored.activeId);
     try {
       const mode = window.localStorage.getItem(EXEC_MODE_KEY);
       if (mode === "all" || mode === "intent") setExecModeState(mode);
@@ -305,67 +221,19 @@ export function ConverseLab({
     }
   };
 
-  // 内置 .env 档案：不进 localStorage、不可编辑删除
-  const envProfile: AgentConnectionProfile = {
-    id: ENV_PROFILE_ID,
-    name: "默认配置",
-    endpoint: localEntry?.endpoint ?? "",
-    model: localEntry?.model ?? "agnes-3.0-flash",
-  };
-  const allProfiles = [envProfile, ...profiles];
-  const activeProfile =
-    allProfiles.find((item) => item.id === activeProfileId) ?? envProfile;
-  // 每轮请求随 body 下发的覆盖值：内置档案即为「无覆盖」
-  const overrides: ConverseOverrides =
-    activeProfile.id === ENV_PROFILE_ID
-      ? {}
-      : {
-          endpoint: activeProfile.endpoint,
-          model: activeProfile.model,
-          ...(activeProfile.apiKey ? { apiKey: activeProfile.apiKey } : {}),
-        };
+  const { overrides } = llm;
 
-  const persistProfiles = (
-    next: AgentConnectionProfile[],
-    activeId: string | null,
-  ) => {
-    setProfiles(next);
-    setActiveProfileId(activeId);
-    try {
-      window.localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(next));
-      if (activeId && activeId !== ENV_PROFILE_ID) {
-        window.localStorage.setItem(ACTIVE_PROFILE_KEY, activeId);
-      } else {
-        window.localStorage.removeItem(ACTIVE_PROFILE_KEY);
-      }
-    } catch {
-      // 隐私模式 / 配额满：配置只在本次会话生效
-    }
-  };
-
-  const saveProfile = (profile: AgentConnectionProfile) => {
-    const exists = profiles.some((item) => item.id === profile.id);
-    const next = exists
-      ? profiles.map((item) => (item.id === profile.id ? profile : item))
-      : [...profiles, profile];
-    // 新增或编辑后即激活：刚保存的配置就是用户想用的
-    persistProfiles(next, profile.id);
-    // 端点/模型变了，历史上下文没有意义
+  // 切换或编辑连接即清空会话：跨端点、跨模型的历史上下文没有意义。
+  // 清空是"会话"的语义，因此留在页面上，不沉到全局配置 hook 里
+  // （沙盒没有会话概念，不该被拖进这份耦合）。
+  const applyProfile = (mutate: () => void) => {
+    mutate();
     for (const id of targetIds) converse.reset(id);
   };
-
-  const deleteProfile = (id: string) => {
-    persistProfiles(
-      profiles.filter((item) => item.id !== id),
-      activeProfileId === id ? null : activeProfileId,
-    );
-  };
-
-  const selectProfile = (id: string) => {
-    persistProfiles(profiles, id === ENV_PROFILE_ID ? null : id);
-    // 切换连接即清空会话：跨端点/模型的历史没有意义
-    for (const id of targetIds) converse.reset(id);
-  };
+  const selectProfile = (id: string) =>
+    applyProfile(() => llm.selectProfile(id));
+  const saveProfile = (profile: LlmConnectionProfile) =>
+    applyProfile(() => llm.saveProfile(profile));
 
   // 一条输入发给选中的 Agent：同时执行 = 广播全部；意图分发 = 服务端
   // 真实 LLM 分类后单发给最合适的一个，分类失败单发首个候选，绝不广播
@@ -419,6 +287,9 @@ export function ConverseLab({
   // 发送刻意用挂载时的 env 默认配置 —— 快捷验证走标准路径，不吃
   // localStorage 里可能过期自定义配置
   const autoFiredRef = useRef(false);
+  // 依赖刻意留空：挂载期一次性触发，进数组等于每次渲染都重新投放。
+  // 抑制注释必须紧贴 useEffect 行才生效（放在依赖数组后无效）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 挂载期一次性深链触发
   useEffect(() => {
     if (autoFiredRef.current || !initialAgentId) return;
     autoFiredRef.current = true;
@@ -441,7 +312,6 @@ export function ConverseLab({
       undefined,
       systemPrompt.trim() || undefined,
     );
-    // biome-ignore lint/correctness/useExhaustiveDependencies: 挂载期一次性深链触发，依赖不进数组
   }, []);
 
   return (
@@ -493,16 +363,16 @@ export function ConverseLab({
             onPick={quickSend}
           />
 
-          {/* 模型配置管理弹窗：新增 / 编辑 / 删除 / 切换连接档案 */}
-          <AgentConfigDialog
+          {/* 全局大模型配置弹窗：与沙盒模拟器共用同一份档案 */}
+          <LlmConfigDialog
             open={editorOpen}
             onOpenChange={setEditorOpen}
-            entry={localEntry ?? null}
-            profiles={profiles}
-            activeProfileId={activeProfileId}
+            envProfile={llm.envProfile}
+            profiles={llm.profiles}
+            activeProfileId={llm.activeProfileId}
             onSelect={selectProfile}
             onSave={saveProfile}
-            onDelete={deleteProfile}
+            onDelete={llm.deleteProfile}
           />
         </aside>
 
@@ -555,8 +425,8 @@ export function ConverseLab({
                 for (const id of targetIds) converse.stop(id);
               }}
               hasAgent={selectedAgents.length > 0}
-              profiles={allProfiles}
-              activeProfileId={activeProfileId}
+              profiles={llm.allProfiles}
+              activeProfileId={llm.activeProfileId}
               onSelectProfile={selectProfile}
               onOpenConfig={() => setEditorOpen(true)}
               onQuickCase={quickSend}
@@ -702,292 +572,6 @@ function VerificationConfig({
         </ul>
       </CardContent>
     </Card>
-  );
-}
-
-/**
- * 模型配置管理弹窗。
- *
- * 连接档案在浏览器本地增删改：列表视图切换激活档案，
- * 表单视图新增 / 编辑单条（端点、模型、密钥）。内置的「默认配置」
- * 档案不进存储、不可编辑删除，作为无覆盖的兜底。
- */
-function AgentConfigDialog({
-  open,
-  onOpenChange,
-  entry,
-  profiles,
-  activeProfileId,
-  onSelect,
-  onSave,
-  onDelete,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  /** 当前目标 Agent 的登记条目：.env 默认档案与表单占位符的来源 */
-  entry: LocalAgentEntry | null;
-  profiles: readonly AgentConnectionProfile[];
-  /** null = 激活的是内置 .env 默认档案 */
-  activeProfileId: string | null;
-  onSelect: (id: string) => void;
-  onSave: (profile: AgentConnectionProfile) => void;
-  onDelete: (id: string) => void;
-}) {
-  // null = 列表视图；{ id } = 新增（无 id）或编辑（有 id）表单视图
-  const [editing, setEditing] = useState<{ id?: string } | null>(null);
-  const [name, setName] = useState("");
-  const [endpoint, setEndpoint] = useState("");
-  const [model, setModel] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [errors, setErrors] = useState<Record<string, string>>({});
-
-  // 打开弹窗 / 进入表单时预填
-  useEffect(() => {
-    if (!open) {
-      setEditing(null);
-      return;
-    }
-    if (editing) {
-      const existing = editing.id
-        ? profiles.find((item) => item.id === editing.id)
-        : undefined;
-      setName(existing?.name ?? `配置 ${profiles.length + 1}`);
-      setEndpoint(existing?.endpoint ?? entry?.endpoint ?? "");
-      setModel(existing?.model ?? entry?.model ?? "");
-      setApiKey(existing?.apiKey ?? "");
-      setErrors({});
-    }
-  }, [open, editing, profiles, entry]);
-
-  // 必填校验：名称 / 端点 / 模型缺一不可，错误内联提示
-  const validate = () => {
-    const next: Record<string, string> = {};
-    if (!name.trim()) next.name = "配置名称为必填项";
-    if (!endpoint.trim()) next.endpoint = "端点为必填项";
-    else if (!/^https?:\/\//.test(endpoint.trim()))
-      next.endpoint = "端点必须以 http:// 或 https:// 开头";
-    if (!model.trim()) next.model = "模型标识为必填项";
-    setErrors(next);
-    return Object.keys(next).length === 0;
-  };
-
-  const save = () => {
-    if (!validate()) return;
-    onSave({
-      id: editing?.id ?? `profile-${Date.now()}`,
-      name: name.trim(),
-      endpoint: endpoint.trim(),
-      model: model.trim(),
-      apiKey: apiKey.trim() || undefined,
-    });
-    setEditing(null);
-  };
-
-  const envEntry = entry;
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="text-base">模型配置</DialogTitle>
-          <DialogDescription className="text-xs leading-relaxed">
-            配置保存在浏览器本地；密钥留空则使用默认配置。带
-            <span aria-hidden="true" className="mx-0.5 text-nova-rose">
-              *
-            </span>
-            为必填项。
-          </DialogDescription>
-        </DialogHeader>
-
-        {editing ? (
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="cfg-name" className="text-xs">
-                配置名称
-                <span aria-hidden="true" className="ml-0.5 text-nova-rose">
-                  *
-                </span>
-              </Label>
-              <Input
-                id="cfg-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="如：Agnes 直连 / 本地 Ollama"
-                className="h-8 text-xs"
-              />
-              {errors.name && (
-                <p className="text-[0.625rem] text-nova-rose">{errors.name}</p>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="cfg-endpoint" className="text-xs">
-                端点
-                <span aria-hidden="true" className="ml-0.5 text-nova-rose">
-                  *
-                </span>
-              </Label>
-              <Input
-                id="cfg-endpoint"
-                value={endpoint}
-                onChange={(event) => setEndpoint(event.target.value)}
-                placeholder="https://api.example.com/v1"
-                className="h-8 font-mono text-xs"
-              />
-              {errors.endpoint && (
-                <p className="text-[0.625rem] text-nova-rose">
-                  {errors.endpoint}
-                </p>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="cfg-model" className="text-xs">
-                模型标识
-                <span aria-hidden="true" className="ml-0.5 text-nova-rose">
-                  *
-                </span>
-              </Label>
-              <Input
-                id="cfg-model"
-                value={model}
-                onChange={(event) => setModel(event.target.value)}
-                placeholder="agnes-3.0-flash / gpt-4o-mini / …"
-                className="h-8 font-mono text-xs"
-              />
-              {errors.model && (
-                <p className="text-[0.625rem] text-nova-rose">{errors.model}</p>
-              )}
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="cfg-api-key" className="text-xs">
-                密钥（可选，留空使用默认配置）
-              </Label>
-              <Input
-                id="cfg-api-key"
-                type="password"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                placeholder="sk-…"
-                className="h-8 font-mono text-xs"
-                autoComplete="off"
-              />
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            <button
-              type="button"
-              onClick={() => onSelect(ENV_PROFILE_ID)}
-              className={cn(
-                "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors",
-                activeProfileId === null || activeProfileId === ENV_PROFILE_ID
-                  ? "border-nova-accent/40 bg-nova-accent/8"
-                  : "border-white/8 bg-white/2 hover:border-white/15",
-              )}
-            >
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-medium">
-                  默认配置
-                  {(activeProfileId === null ||
-                    activeProfileId === ENV_PROFILE_ID) && (
-                    <span className="nova-mono-label ml-2 text-[0.5625rem] text-nova-accent">
-                      当前
-                    </span>
-                  )}
-                </p>
-                <p className="mt-0.5 truncate font-mono text-[0.625rem] text-muted-foreground">
-                  {envEntry?.model ?? "agnes-3.0-flash"}
-                </p>
-              </div>
-            </button>
-
-            {profiles.map((profile) => (
-              <div
-                key={profile.id}
-                className={cn(
-                  "flex items-center gap-1 rounded-lg border px-3 py-2 transition-colors",
-                  activeProfileId === profile.id
-                    ? "border-nova-accent/40 bg-nova-accent/8"
-                    : "border-white/8 bg-white/2",
-                )}
-              >
-                <button
-                  type="button"
-                  onClick={() => onSelect(profile.id)}
-                  className="min-w-0 flex-1 text-left"
-                >
-                  <p className="truncate text-xs font-medium">
-                    {profile.name}
-                    {activeProfileId === profile.id && (
-                      <span className="nova-mono-label ml-2 text-[0.5625rem] text-nova-accent">
-                        当前
-                      </span>
-                    )}
-                  </p>
-                  <p className="mt-0.5 truncate font-mono text-[0.625rem] text-muted-foreground">
-                    {profile.model} · {profile.endpoint}
-                  </p>
-                </button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={`编辑 ${profile.name}`}
-                  className="size-6 text-muted-foreground hover:text-foreground"
-                  onClick={() => setEditing({ id: profile.id })}
-                >
-                  <Pencil className="size-3" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={`删除 ${profile.name}`}
-                  className="size-6 text-muted-foreground hover:text-nova-rose"
-                  onClick={() => onDelete(profile.id)}
-                >
-                  <Trash2 className="size-3" />
-                </Button>
-              </div>
-            ))}
-
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 w-full text-xs"
-              onClick={() => setEditing({})}
-            >
-              <Plus />
-              新增配置
-            </Button>
-          </div>
-        )}
-
-        <DialogFooter className="gap-2">
-          {editing ? (
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                className="text-xs"
-                onClick={() => setEditing(null)}
-              >
-                取消
-              </Button>
-              <Button size="sm" className="text-xs" onClick={save}>
-                保存
-              </Button>
-            </>
-          ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-xs"
-              onClick={() => onOpenChange(false)}
-            >
-              关闭
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -1537,7 +1121,7 @@ function DraftComposer({
   onStop: () => void;
   hasAgent: boolean;
   /** 全部连接档案（含内置 .env 默认），供下拉切换 */
-  profiles: readonly AgentConnectionProfile[];
+  profiles: readonly LlmConnectionProfile[];
   /** null = 激活的是内置 .env 默认档案 */
   activeProfileId: string | null;
   /** 切换激活的连接档案 */

@@ -130,14 +130,22 @@ export function delay(ms: number): Promise<void> {
 /**
  * 真实执行器请求体。
  *
- * 只接受可序列化的最小字段集：Agent 档案由服务端按 id 反查，
- * 绝不接受客户端传入的档案内容 —— 否则评分就成了让客户端自己给自己打分。
+ * 只接受可序列化的最小字段集：Agent 档案（身份、能力向量、场景通过率）
+ * 由服务端按 id 反查，绝不接受客户端传入的档案内容 —— 否则评分就成了
+ * 让客户端自己给自己打分。
+ *
+ * `overrides` 是**唯一的例外，且是刻意放宽**：它只覆盖"这次调用哪个
+ * 大模型端点"，与对话验证共用同一套信任边界（`sanitizeOverrides` 逐项
+ * 校验协议与长度）。身份归属仍然只由 `agentId` 决定，评分依旧由服务端
+ * 从可观测计数派生，客户端拿不到任何打分口子。
  */
 export type LiveRunRequest = Pick<
   SimulationConfig,
   "systemPrompt" | "environment" | "chaos" | "maxSteps"
 > & {
   agentId: string;
+  /** 全局大模型配置里选中的连接档案；缺省 = 沿用登记条目与 .env */
+  overrides?: ConverseOverrides;
 };
 
 /* -------------------------------------------------------------------------- */

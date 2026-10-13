@@ -1,6 +1,6 @@
 # NOVA Agent 对接协议（v1）
 
-> **NOVA Agent Protocol v1.0**
+> **NOVA Agent Protocol v1.2**
 > 本文件是 NOVA 沙盒执行器 / 探针与被测 Agent 之间的**规范契约**：
 > 端点形态、请求 / 响应 Schema、工具与任务书格式、混沌故障文案、SSE 事件、
 > 安全边界与登记规则。
@@ -174,9 +174,9 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 ## 4. SSE 事件协议（NOVA 控制台侧）
 
 `POST /api/sandbox/run` 以 SSE 帧流式返回执行过程，帧编码
-`data: {json}\n\n`，响应头 `X-Accel-Buffering: no`（`api/sandbox/run/route.ts:90-99,144-152`）。
+`data: {json}\n\n`，响应头 `X-Accel-Buffering: no`（`api/sandbox/run/route.ts:110-121,164-170`）。
 事件是判别联合 `SandboxEvent = meta | step | done | error`
-（`executor.ts:91-104`）：
+（`executor.ts:92-105`）：
 
 | 事件 | 字段 | 语义 |
 | :--- | :--- | :--- |
@@ -186,10 +186,13 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 | `error` | `message` · `hint?` | 中止（客户端断开 / 协议失败 / 模型调用超时） |
 
 **信任边界**：Agent 档案由服务端按 `agentId` 反查，请求体只接受
-`{ agentId, systemPrompt, environment, chaos, maxSteps }`（`executor.ts:135-140`）——
-客户端传入的档案内容一律不采信，否则评分等于被测方给自己打分。
-落库（`.nova/runs.json`）发生在服务端收到 `done` 事件时
-（`route.ts:110-124`），客户端只读事件流。
+`{ agentId, systemPrompt, environment, chaos, maxSteps, overrides? }`
+（`executor.ts:142-150`）——客户端传入的档案内容一律不采信，
+否则评分等于被测方给自己打分。`overrides` 是**唯一且刻意的例外**：
+它只覆盖端点与模型标识（与对话验证共用 `sanitizeOverrides` 校验，
+`converse-request.ts:150-198`），登录身份仍由 `agentId` 决定、
+评分仍由服务端从可观测计数派生。落库（`.nova/runs.json`）发生在
+服务端收到 `done` 事件时（`route.ts:133-146`），客户端只读事件流。
 
 ### 4.1 对话验证与意图分发（Converse Lab，观测路径）
 
@@ -238,19 +241,26 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 
 | 约束 | 值 | 位置 |
 | :--- | :--- | :--- |
-| 请求体上限 | 32KB（**UTF-8 字节**，中文按字节计） | `route.ts:23,32` |
-| `systemPrompt` | 超过 8000 字符截断 | `route.ts:196` |
-| `chaos` 条目 | 最多 8 条，`kind` 必须在五类白名单内，`intensity` 钳制 [0,1] | `route.ts:47-53,198-202` |
-| `maxSteps` | 服务端再钳 [2, 20]，不信任客户端 | `route.ts:186-192`（执行器侧硬顶 20，`live.ts:46`） |
-| 时间预算 | 单请求 SSE 流 120s（`maxDuration`） | `route.ts:20` |
+| 请求体上限 | 32KB（**UTF-8 字节**，中文按字节计） | `route.ts:32,41` |
+| `systemPrompt` | 超过 8000 字符截断 | `route.ts:216` |
+| `chaos` 条目 | 最多 8 条，`kind` 必须在五类白名单内，`intensity` 钳制 [0,1] | `route.ts:64-70,218-222` |
+| `maxSteps` | 服务端再钳 [2, 20]，不信任客户端 | `route.ts:206-212`（执行器侧硬顶 20，`live.ts:46`） |
+| `overrides` | 只允许 `endpoint` / `model` / `apiKey`；协议限 http(s)、长度钳制 | `converse-request.ts:150-198`（与对话验证共用） |
+| 时间预算 | 单请求 SSE 流 120s（`maxDuration`） | `route.ts:29` |
 | 单请求模型调用超时 | `agent.llm.timeoutMs`（默认 30000ms），超时记为该轮故障而非用户中止 | `llm.ts:105-112,139-143` |
-| 方法 | 仅 POST，GET 一律 405 | `route.ts:229-234` |
+| 方法 | 仅 POST，GET 一律 405 | `route.ts:249-254` |
 
-### 5.3 密钥
+### 5.3 密钥与全局大模型配置
 
 - 登记条目里的 `apiKeyEnv` **只写环境变量名**，值只存在于服务端
   `.env` / `.env.local`（`local-agents.ts:38-43`）；
 - 密钥永不下发前端：`LlmSettings` 只在服务端解析（`llm.ts:53`）；
+  界面拿到的全局默认连接只有端点与模型（`lib/nova/env-llm.ts`）；
+- 「全局大模型配置」是**沙盒与对话验证共用的一份连接档案**
+  （`lib/nova/llm-profiles.ts` + `hooks/use-llm-profiles.ts`，
+  存 `nova:llm:profiles`），默认档案代表"不做覆盖"，由服务端按
+  `NOVA_LLM_BASE_URL` / `NOVA_LLM_MODEL` 与登记条目解析；自定义档案
+  才随请求下发 `overrides`，密钥同样只在本次请求内使用、服务端不落库；
 - 未跑完验证的本地 Agent 不进排行榜与能力矩阵，界面显示「待验证」而不是
   一个假的 0 分（`run-store.ts` → `verifiedAgents()`，`local-agents.ts` 头注）。
 
@@ -295,11 +305,14 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 
 ## 8. 版本与变更流程
 
-- 本协议版本 **v1.1**（2026-10-13）—— v1.0（2026-10-10）固化对接契约后，
-  v1.1 新增控制台侧的对话验证 / 意图分发事件与路由（§4.1），Agent 侧
-  端点契约（§1–§3、§5）未变；
-- 变更级别：**格式变更**（工具 Schema、SSE 事件联合、故障文案结构、端点契约）
-  必须升协议版本并同步 §9 对应表；**文案微调**（提示词措辞）随代码提交即可；
+- 本协议版本 **v1.2**（2026-10-13）—— v1.0（2026-10-10）固化对接契约、
+  v1.1（2026-10-13）新增控制台侧的对话验证 / 意图分发事件与路由（§4.1）后，
+  v1.2 给沙盒请求体加上可选的 `overrides`（§4、§5.2），并把连接档案收敛为
+  **沙盒与对话验证共用的全局大模型配置**（§5.3）；Agent 侧端点契约
+  （§1–§3）与评分口径未变；
+- 变更级别：**格式变更**（工具 Schema、SSE 事件联合、故障文案结构、端点契约、
+  请求体字段）必须升协议版本并同步 §9 对应表；**文案微调**（提示词措辞）
+  随代码提交即可；
 - 涉及评分口径的任何变更必须同步 `docs/nova-standard.md`（`AGENTS.md` 约束 5），
   本文件不新增指标。
 
@@ -312,11 +325,11 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 | §3.1 任务书 / 静态校验 | `lib/nova/executors/live.ts:49-81`；`lib/nova/constants.ts` → `DEFAULT_SYSTEM_PROMPT` |
 | §3.2 工具 Schema | `lib/nova/executors/tools.ts:38-86` |
 | §3.3 故障回传格式 | `lib/nova/executors/tools.ts:161-226`；`live.ts:391-463` |
-| §4 SSE 事件 | `lib/nova/executor.ts:91-104`；`api/sandbox/run/route.ts:84-152` |
+| §4 SSE 事件 | `lib/nova/executor.ts:92-105`；`api/sandbox/run/route.ts:104-172` |
 | §4.1 对话验证 / 意图分发 | `lib/nova/intent.ts`（parseIntentOutput）；`api/agents/intent/route.ts`；`api/agents/dispatch/route.ts`；`api/agents/converse/route.ts`；`executors/converse-request.ts`（共享校验） |
 | §5.1 探针安全 | `api/agents/probe/route.ts:15-41,107-197` |
-| §5.2 沙盒路由约束 | `api/sandbox/run/route.ts:19-234` |
-| §5.3 密钥 / 待验证口径 | `lib/nova/local-agents.ts:38-43,77-118`；`lib/nova/run-store.ts` → `verifiedAgents` |
+| §5.2 沙盒路由约束 | `api/sandbox/run/route.ts:19-254` |
+| §5.3 密钥 / 全局大模型配置 | `lib/nova/local-agents.ts:38-43,77-118`；`lib/nova/llm-profiles.ts`；`lib/nova/env-llm.ts`；`hooks/use-llm-profiles.ts`；`lib/nova/run-store.ts` → `verifiedAgents` |
 | §5.4 注入服从 | `lib/nova/executors/tools.ts:228-243`；`live.ts:487-508` |
 | §6 登记规则 | `lib/nova/local-agents.ts:23-48,126-154` |
 | §7 轮次 / 排布 / 交卷 | `lib/nova/executors/live.ts:46,242-266`；`chaos.ts:64-98` |

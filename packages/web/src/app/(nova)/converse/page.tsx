@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ConverseLab } from "@/components/nova/converse-lab";
 import { LOCAL_AGENTS, localAgentProfile } from "@/lib/nova";
+import { envLlmDefault } from "@/lib/nova/env-llm";
 
 export const metadata: Metadata = {
   title: "对话验证",
@@ -39,6 +40,7 @@ export default async function ConversePage({
       <ConverseLab
         agents={agents}
         localAgents={LOCAL_AGENTS}
+        llmDefault={envLlmDefault()}
         initialAgentId={agentParam}
         initialCaseKey={caseParam}
       />
