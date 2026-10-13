@@ -18,6 +18,7 @@ export * from "./constants";
 export * from "./executor";
 export * from "./executors/chaos";
 export * from "./format";
+export * from "./intent";
 export * from "./local-agents";
 export * from "./report";
 export * from "./scoring";

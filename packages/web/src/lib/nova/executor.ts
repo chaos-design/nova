@@ -229,6 +229,13 @@ export type ConverseEvent =
       agentId: string;
       agentName: string;
       model: string;
+      /**
+       * 意图分发的路由结论：仅 /api/agents/dispatch 路径携带。
+       *
+       * `fallback: true` 表示真实分类失败，服务端已按约定单发首个候选
+       * ——兜底同样只选一个目标，绝不把消息广播给多个 Agent。
+       */
+      dispatched?: { fallback: boolean };
     }
   | { type: "step"; step: ConverseStep }
   | { type: "turn"; turn: ConverseTurnResult }
