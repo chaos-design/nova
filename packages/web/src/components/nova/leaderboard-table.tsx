@@ -8,6 +8,7 @@ import {
   FileDown,
   ShieldCheck,
 } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AgentIdentity } from "@/components/nova/agent-identity";
 import { AgentStatusBadge } from "@/components/nova/agent-status-badge";
@@ -52,6 +53,9 @@ import {
 type SortKey = "rank" | "compositeScore" | CapabilityVectorId;
 
 const SORTABLE_VECTOR_KEYS = CAPABILITY_VECTORS.map((vector) => vector.id);
+
+/** 表头列数：# + Agent + 综合评分 + 评级 + 各能力向量 + 场景 + 行尾箭头 */
+const COLUMN_COUNT = 6 + CAPABILITY_VECTORS.length;
 
 /**
  * 排行榜。
@@ -124,10 +128,17 @@ export function LeaderboardTable({
         <CardHeader>
           <CardTitle>NOVA 综合评分榜</CardTitle>
           <CardDescription>
-            共 {entries.length} 个 Agent · 点击表头排序，点击行查看评分详情
+            {rows.length === 0
+              ? "暂无排行数据 · 榜单只收录真实跑完沙盒验证的 Agent"
+              : `共 ${entries.length} 个 Agent · 点击表头排序，点击行查看评分详情`}
           </CardDescription>
           <CardAction>
-            <Button variant="outline" size="sm" onClick={exportAll}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportAll}
+              disabled={rows.length === 0}
+            >
               <FileDown />
               导出全量报告
             </Button>
@@ -171,76 +182,82 @@ export function LeaderboardTable({
             </TableHeader>
 
             <TableBody>
-              {rows.map((entry) => {
-                const agent = agents.find((item) => item.id === entry.agentId);
-                const active = entry.agentId === selectedId;
+              {rows.length === 0 ? (
+                <EmptyLeaderboardRow />
+              ) : (
+                rows.map((entry) => {
+                  const agent = agents.find(
+                    (item) => item.id === entry.agentId,
+                  );
+                  const active = entry.agentId === selectedId;
 
-                return (
-                  <TableRow
-                    key={entry.agentId}
-                    data-active={active}
-                    onClick={() => setSelectedId(entry.agentId)}
-                    onKeyDown={(event) => {
-                      // 行选择必须键盘可达：评分详情与导出入口都挂在选中态上
-                      if (event.key !== "Enter" && event.key !== " ") return;
-                      event.preventDefault();
-                      setSelectedId(entry.agentId);
-                    }}
-                    tabIndex={0}
-                    aria-selected={active}
-                    className={cn(
-                      "cursor-pointer transition-colors",
-                      "focus-visible:outline focus-visible:outline-nova-cyan/60 focus-visible:-outline-offset-1",
-                      active && "bg-nova-cyan/6",
-                    )}
-                  >
-                    <TableCell className="font-mono text-muted-foreground tabular-nums">
-                      {entry.rank}
-                    </TableCell>
-                    <TableCell>
-                      {agent ? (
-                        <AgentIdentity agent={agent} />
-                      ) : (
-                        <span className="text-sm">{entry.name}</span>
+                  return (
+                    <TableRow
+                      key={entry.agentId}
+                      data-active={active}
+                      onClick={() => setSelectedId(entry.agentId)}
+                      onKeyDown={(event) => {
+                        // 行选择必须键盘可达：评分详情与导出入口都挂在选中态上
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        setSelectedId(entry.agentId);
+                      }}
+                      tabIndex={0}
+                      aria-selected={active}
+                      className={cn(
+                        "cursor-pointer transition-colors",
+                        "focus-visible:outline focus-visible:outline-nova-cyan/60 focus-visible:-outline-offset-1",
+                        active && "bg-nova-cyan/6",
                       )}
-                    </TableCell>
-                    <TableCell className="text-right font-mono font-semibold tabular-nums">
-                      {formatNumber(entry.compositeScore, 1)}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <span
-                        className={cn(
-                          "inline-block rounded-md border px-1.5 py-0.5 font-mono text-xs",
-                          GRADE_META[entry.grade].chipClass,
+                    >
+                      <TableCell className="font-mono text-muted-foreground tabular-nums">
+                        {entry.rank}
+                      </TableCell>
+                      <TableCell>
+                        {agent ? (
+                          <AgentIdentity agent={agent} />
+                        ) : (
+                          <span className="text-sm">{entry.name}</span>
                         )}
-                      >
-                        {entry.grade}
-                      </span>
-                    </TableCell>
-                    {CAPABILITY_VECTORS.map((vector) => (
-                      <TableCell key={vector.id}>
-                        <ScoreCell
-                          value={entry.vectorScores[vector.id]}
-                          accent={vector.accent}
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-semibold tabular-nums">
+                        {formatNumber(entry.compositeScore, 1)}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <span
+                          className={cn(
+                            "inline-block rounded-md border px-1.5 py-0.5 font-mono text-xs",
+                            GRADE_META[entry.grade].chipClass,
+                          )}
+                        >
+                          {entry.grade}
+                        </span>
+                      </TableCell>
+                      {CAPABILITY_VECTORS.map((vector) => (
+                        <TableCell key={vector.id}>
+                          <ScoreCell
+                            value={entry.vectorScores[vector.id]}
+                            accent={vector.accent}
+                          />
+                        </TableCell>
+                      ))}
+                      <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
+                        {entry.scenariosPassed}/{entry.scenariosTotal}
+                      </TableCell>
+                      <TableCell>
+                        <ChevronRight
+                          className={cn(
+                            "size-4 transition-colors",
+                            active
+                              ? "text-nova-cyan"
+                              : "text-muted-foreground/40",
+                          )}
                         />
                       </TableCell>
-                    ))}
-                    <TableCell className="text-right font-mono text-xs tabular-nums text-muted-foreground">
-                      {entry.scenariosPassed}/{entry.scenariosTotal}
-                    </TableCell>
-                    <TableCell>
-                      <ChevronRight
-                        className={cn(
-                          "size-4 transition-colors",
-                          active
-                            ? "text-nova-cyan"
-                            : "text-muted-foreground/40",
-                        )}
-                      />
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+                    </TableRow>
+                  );
+                })
+              )}
             </TableBody>
           </Table>
         </CardContent>
@@ -331,6 +348,36 @@ export function LeaderboardTable({
         </Card>
       )}
     </div>
+  );
+}
+
+/**
+ * 空态行：榜单为空时的唯一说明。
+ *
+ * NOVA 界面上没有预置数据，因此"空"不是异常而是初始状态 —— 这里必须
+ * 说清"为什么空"与"怎么才有数据"，否则用户只看到一个没有表体的表头，
+ * 会误以为页面坏了。
+ */
+function EmptyLeaderboardRow() {
+  return (
+    <TableRow className="hover:bg-transparent">
+      <TableCell colSpan={COLUMN_COUNT} className="py-10 text-center">
+        <div className="mx-auto max-w-md space-y-2">
+          <p className="text-sm text-foreground">还没有可排行的 Agent</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            排行榜只收录真实跑完沙盒验证的本地 Agent，没有预置档案。 在
+            <Link
+              href="/sandbox"
+              className="mx-1 text-nova-accent underline-offset-2 hover:underline"
+            >
+              沙盒模拟器
+            </Link>
+            里选定一个已登记的 Agent 投放一次，跑完它就会带着综合评分、
+            评级与能力向量出现在这里。
+          </p>
+        </div>
+      </TableCell>
+    </TableRow>
   );
 }
 

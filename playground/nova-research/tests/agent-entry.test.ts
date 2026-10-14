@@ -1,19 +1,15 @@
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
-import { createAgentServer, HttpError } from "../index.mjs";
+import { readFileSync } from "node:fs";
+import { findTagIssues, PERSONA_MAX_CHARS } from "@chaos-design/agent-kit";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createAgentServer } from "../index.mjs";
 
 /**
- * Agent 入口的 HTTP 测试。
+ * 调研专员入口的集成测试。
  *
- * persona.test.ts 已覆盖纯整形逻辑；这里补 IO 侧：上游调用的错误映射
- * （stub 全局 fetch，不烧真实 token）与路由分发（临时端口起真服务）。
+ * 纯整形逻辑（人格层 / 上游错误映射）已上移 @chaos-design/agent-kit
+ * 并在其包内覆盖；这里验证两件事：本 Agent 的 persona.md 结构完好，
+ * 以及入口接线产物（模型标识、路由分发）在真实 HTTP 栈上行为正确。
+ * 上游用全局 stub 拦截，不烧真实 token。
  */
 
 const MODEL = "nova-research-agent";
@@ -23,71 +19,18 @@ const upstreamOk = {
   usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
 };
 
-function stubFetch(impl: () => Promise<unknown>) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => impl() as never),
-  );
-}
+describe("persona.md 与入口的一致性", () => {
+  it("入口加载的就是仓库里的 persona.md（trim 后、标签配对、长度合规）", () => {
+    const filePrompt = readFileSync(
+      new URL("../persona.md", import.meta.url),
+      "utf8",
+    )
+      .replace(/^\uFEFF/, "")
+      .trim();
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
-describe("callUpstream 错误映射", () => {
-  it("上游 200 + JSON：原样返回解析结果", async () => {
-    stubFetch(
-      async () => new Response(JSON.stringify(upstreamOk), { status: 200 }),
-    );
-    const { callUpstream } = await import("../index.mjs");
-    const payload = await callUpstream({ model: "agnes-3.0-flash" });
-    expect(payload.choices[0].message.content).toBe("调研结论…");
-  });
-
-  it("上游非 2xx：状态码原样透传，文案指向 NOVA_LLM_* 配置", async () => {
-    stubFetch(async () => new Response("quota exceeded", { status: 429 }));
-    const { callUpstream } = await import("../index.mjs");
-    const error = await callUpstream({}).catch((e) => e);
-
-    expect(error).toBeInstanceOf(HttpError);
-    expect(error.status).toBe(429);
-    expect(error.message).toContain("429");
-    expect(error.message).toContain("NOVA_LLM_");
-  });
-
-  it("连接失败：504 与可读的端点信息", async () => {
-    stubFetch(async () => {
-      throw new Error("ECONNREFUSED");
-    });
-    const { callUpstream } = await import("../index.mjs");
-    const error = await callUpstream({}).catch((e) => e);
-
-    expect(error).toBeInstanceOf(HttpError);
-    expect(error.status).toBe(504);
-    expect(error.message).toContain("无法连接上游模型端点");
-  });
-
-  it("上游超时（TimeoutError）：504 与超时文案", async () => {
-    stubFetch(async () => {
-      throw Object.assign(new Error("timed out"), { name: "TimeoutError" });
-    });
-    const { callUpstream } = await import("../index.mjs");
-    const error = await callUpstream({}).catch((e) => e);
-
-    expect(error.status).toBe(504);
-    expect(error.message).toContain("超时");
-  });
-
-  it("上游返回非 JSON：502", async () => {
-    stubFetch(
-      async () => new Response("<html>bad gateway</html>", { status: 200 }),
-    );
-    const { callUpstream } = await import("../index.mjs");
-    const error = await callUpstream({}).catch((e) => e);
-
-    expect(error).toBeInstanceOf(HttpError);
-    expect(error.status).toBe(502);
-    expect(error.message).toContain("非 JSON");
+    expect(filePrompt.length).toBeGreaterThan(0);
+    expect(filePrompt.length).toBeLessThanOrEqual(PERSONA_MAX_CHARS);
+    expect(findTagIssues(filePrompt)).toEqual([]);
   });
 });
 
@@ -128,6 +71,7 @@ describe("HTTP 路由", () => {
 
   afterAll(() => {
     server.close();
+    vi.unstubAllGlobals();
   });
 
   it("GET /v1/models：返回登记的模型 id", async () => {
@@ -137,6 +81,7 @@ describe("HTTP 路由", () => {
     expect(response.status).toBe(200);
     expect(body.object).toBe("list");
     expect(body.data[0].id).toBe(MODEL);
+    expect(body.data[0].owned_by).toBe("nova-research");
   });
 
   it("POST /v1/chat/completions：转发上游并以登记模型 id 返回", async () => {

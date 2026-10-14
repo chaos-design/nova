@@ -1,6 +1,6 @@
 # NOVA Agent 对接协议（v1）
 
-> **NOVA Agent Protocol v1.0**
+> **NOVA Agent Protocol v1.2**
 > 本文件是 NOVA 沙盒执行器 / 探针与被测 Agent 之间的**规范契约**：
 > 端点形态、请求 / 响应 Schema、工具与任务书格式、混沌故障文案、SSE 事件、
 > 安全边界与登记规则。
@@ -138,6 +138,9 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 | `external_search` | `query: string`（必填）、`limit: integer`（1 ~ 20，缺省 7） | `additionalProperties: false` |
 | `summarize` | `records: string[]`（必填） | `additionalProperties: false` |
 
+这两个是**必需支持的下限**，不是全部：Agent 可以在自己的端点里再声明并就地执行
+额外的领域工具（§3.4）。
+
 工具本身是**确定性纯函数**：同一 `query` 永远返回同一结果集；混沌不是让工具
 不稳定，而是在稳定工具外面包一层按剧本作恶的代理（`tools.ts:4-12`）。
 一次工具调用**最多注入一种故障**，且混沌只作用于 `external_search`
@@ -171,12 +174,39 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
   再失败并白白消耗轮次——正确动作是切换备用路径（有素材先 `summarize`，
   无素材开新侧面）。
 
+### 3.4 Agent 自带领域工具（可选，v1.3）
+
+Agent 可以在自己的端点里声明**额外的工具**并就地真实执行：请求体里的 `tools`
+是 NOVA 下发的清单，Agent 可以往里追加自己的工具定义；模型选中它们时，由 Agent
+自己跑完（真实 HTTP 调用 / 真实计算），结果只回灌给上游模型。
+
+分界（这条线不能糊涂）：
+
+| 工具归属 | 处理方式 | 是否进 NOVA 观测面 |
+| :--- | :--- | :--- |
+| Agent 自己声明的领域工具 | 就地执行，以 `role=tool` 回灌给上游模型 | **否** |
+| `external_search` / `summarize` | 必须原样以 `tool_calls` 返回给 NOVA | 是（执行器真实代执行） |
+
+- 同一轮里两类工具混着来：本地工具先执行完，NOVA 的调用仍在**同一次响应**里
+  回传；本地结果以一行文本摘要留在 `choices[0].message.content`，保证下一轮
+  上下文不断档；
+- 自执行轮次有上限（参考实现 3~4 轮），用尽后剥掉工具强制文本收口，
+  并且不会把本地工具名回传给 NOVA（否则会变成一条「未知工具」的失败记录）；
+- 自执行消耗的 token 必须累计进响应的 `usage`，否则 Agent 侧的工具循环在
+  成本口径上等于没发生过；
+- 禁止把 `external_search` 就地执行掉：那会绕过 NOVA 的工具观测与评分口径
+  （§5.4 的服从判定同样建立在可观测的工具调用上）。
+
+参考实现：`packages/agent-kit/tools.mjs`（`defineTool` / `createDomainToolkit`）；
+落地示例：`playground/nova-travel`（地理编码 / 天气 / 汇率）、
+`playground/nova-writer`（文本体检 / 百科术语核验）。
+
 ## 4. SSE 事件协议（NOVA 控制台侧）
 
 `POST /api/sandbox/run` 以 SSE 帧流式返回执行过程，帧编码
-`data: {json}\n\n`，响应头 `X-Accel-Buffering: no`（`api/sandbox/run/route.ts:90-99,144-152`）。
+`data: {json}\n\n`，响应头 `X-Accel-Buffering: no`（`api/sandbox/run/route.ts:110-121,164-170`）。
 事件是判别联合 `SandboxEvent = meta | step | done | error`
-（`executor.ts:91-104`）：
+（`executor.ts:92-105`）：
 
 | 事件 | 字段 | 语义 |
 | :--- | :--- | :--- |
@@ -186,10 +216,41 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 | `error` | `message` · `hint?` | 中止（客户端断开 / 协议失败 / 模型调用超时） |
 
 **信任边界**：Agent 档案由服务端按 `agentId` 反查，请求体只接受
-`{ agentId, systemPrompt, environment, chaos, maxSteps }`（`executor.ts:135-140`）——
-客户端传入的档案内容一律不采信，否则评分等于被测方给自己打分。
-落库（`.nova/runs.json`）发生在服务端收到 `done` 事件时
-（`route.ts:110-124`），客户端只读事件流。
+`{ agentId, systemPrompt, environment, chaos, maxSteps, overrides? }`
+（`executor.ts:142-150`）——客户端传入的档案内容一律不采信，
+否则评分等于被测方给自己打分。`overrides` 是**唯一且刻意的例外**：
+它只覆盖端点与模型标识（与对话验证共用 `sanitizeOverrides` 校验，
+`converse-request.ts:150-198`），登录身份仍由 `agentId` 决定、
+评分仍由服务端从可观测计数派生。落库（`.nova/runs.json`）发生在
+服务端收到 `done` 事件时（`route.ts:133-146`），客户端只读事件流。
+
+### 4.1 对话验证与意图分发（Converse Lab，观测路径）
+
+对话验证与意图分发共用一套 SSE 形态，事件是判别联合
+`ConverseEvent = meta | step | turn | error`（`executor.ts`）。这条路径
+**只观测不评分**：不写 run-store、不进排行榜，`turn` 里只有可观测后果
+（工具调用、token、延迟、注入命中标记）。
+
+| 路由 | 请求 | 行为 |
+| :--- | :--- | :--- |
+| `POST /api/agents/converse` | `{ agentId, history, userMessage, systemPrompt?, overrides? }` | 定点执行：档案按 `agentId` 服务端反查，历史整轮回传（无状态约定），流式返回一轮对话 |
+| `POST /api/agents/intent` | `{ text, agents: [{ id, name, model?, description? }] }` | 分类即服务：一次零温度 LLM 分类，返回 `{ agentId, output }`；单候选直接返回，不烧分类调用 |
+| `POST /api/agents/dispatch` | `{ text, agents, histories, systemPrompt?, overrides? }` | 分类 + 转发合一：服务端分类后直接驱动对话执行器；历史按候选分别携带（`histories[agentId]`），路由结果定了才取对应历史 |
+
+**意图分类的兜底语义（单发，绝不广播）**：解析逐级放宽——模型输出
+包含 id 原文 → 包含名称（均不区分大小写）→ 兜底落第一个候选
+（`lib/nova/intent.ts` 的 `parseIntentOutput`，服务端与单测共用）。
+无论解析结果如何，一条消息只投递给一个 Agent。`dispatch` 的分类
+失败不报错：落首个候选并在首个 `meta` 事件标注
+`dispatched: { fallback: true }`，客户端据此迁移会话分桶。
+
+候选与输入的上限（`intent.ts` / `converse-request.ts`）：候选 ≤ 10、
+单条 `description`（领域描述，来自登记 `tagline`）≤ 200 字符、
+用户消息 ≤ 2000 字符、历史 ≤ 24 条、请求体 ≤ 32KB；分类超时 15s
+（`INTENT_TIMEOUT_MS`），超时按分类失败走兜底。
+
+`/api/agents/intent` 保留为回退路径：dispatch 故障时客户端可退回
+「先分类、后定点执行」的两步编排。
 
 ## 5. 安全边界
 
@@ -210,19 +271,26 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 
 | 约束 | 值 | 位置 |
 | :--- | :--- | :--- |
-| 请求体上限 | 32KB（**UTF-8 字节**，中文按字节计） | `route.ts:23,32` |
-| `systemPrompt` | 超过 8000 字符截断 | `route.ts:196` |
-| `chaos` 条目 | 最多 8 条，`kind` 必须在五类白名单内，`intensity` 钳制 [0,1] | `route.ts:47-53,198-202` |
-| `maxSteps` | 服务端再钳 [2, 20]，不信任客户端 | `route.ts:186-192`（执行器侧硬顶 20，`live.ts:46`） |
-| 时间预算 | 单请求 SSE 流 120s（`maxDuration`） | `route.ts:20` |
+| 请求体上限 | 32KB（**UTF-8 字节**，中文按字节计） | `route.ts:32,41` |
+| `systemPrompt` | 超过 8000 字符截断 | `route.ts:216` |
+| `chaos` 条目 | 最多 8 条，`kind` 必须在五类白名单内，`intensity` 钳制 [0,1] | `route.ts:64-70,218-222` |
+| `maxSteps` | 服务端再钳 [2, 20]，不信任客户端 | `route.ts:206-212`（执行器侧硬顶 20，`live.ts:46`） |
+| `overrides` | 只允许 `endpoint` / `model` / `apiKey`；协议限 http(s)、长度钳制 | `converse-request.ts:150-198`（与对话验证共用） |
+| 时间预算 | 单请求 SSE 流 120s（`maxDuration`） | `route.ts:29` |
 | 单请求模型调用超时 | `agent.llm.timeoutMs`（默认 30000ms），超时记为该轮故障而非用户中止 | `llm.ts:105-112,139-143` |
-| 方法 | 仅 POST，GET 一律 405 | `route.ts:229-234` |
+| 方法 | 仅 POST，GET 一律 405 | `route.ts:249-254` |
 
-### 5.3 密钥
+### 5.3 密钥与全局大模型配置
 
 - 登记条目里的 `apiKeyEnv` **只写环境变量名**，值只存在于服务端
   `.env` / `.env.local`（`local-agents.ts:38-43`）；
 - 密钥永不下发前端：`LlmSettings` 只在服务端解析（`llm.ts:53`）；
+  界面拿到的全局默认连接只有端点与模型（`lib/nova/env-llm.ts`）；
+- 「全局大模型配置」是**沙盒与对话验证共用的一份连接档案**
+  （`lib/nova/llm-profiles.ts` + `hooks/use-llm-profiles.ts`，
+  存 `nova:llm:profiles`），默认档案代表"不做覆盖"，由服务端按
+  `NOVA_LLM_BASE_URL` / `NOVA_LLM_MODEL` 与登记条目解析；自定义档案
+  才随请求下发 `overrides`，密钥同样只在本次请求内使用、服务端不落库；
 - 未跑完验证的本地 Agent 不进排行榜与能力矩阵，界面显示「待验证」而不是
   一个假的 0 分（`run-store.ts` → `verifiedAgents()`，`local-agents.ts` 头注）。
 
@@ -253,6 +321,17 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 （`localAgentEnvSnippet` / `localAgentSourceSnippet`，`local-agents.ts:126-154`）。
 向导不代写文件——登记必须走代码评审。
 
+**登记口径**（`local-agents.ts` 头注）：只收**真实大模型端点的真实 Agent** ——
+回复出自真实模型，且有领域人格与可判定的职责边界。两类东西刻意不入表：
+
+| 不收 | 原因 |
+| :--- | :--- |
+| 裸模型端点（直接把上游大模型挂上来） | 没有领域人格 / 工具 / 职责边界，跑出来的分数说明不了任何事 |
+| 规则执行体（`playground/nova-local`） | 回复不出自大模型；只在 `NOVA_E2E=1` 的端到端验证进程里临时登记 |
+
+当前登记：`agt-local-travel`（行程规划师）与 `agt-local-writer`（文案写手），
+两者职责互斥，是 Converse Lab 意图分发的默认验证对象。
+
 ## 7. Agent 开发者速查（对照实现）
 
 | 约束 | 值 / 行为 | 依据 |
@@ -267,9 +346,15 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 
 ## 8. 版本与变更流程
 
-- 本协议版本 **v1.0**（2026-10-10）固化当前实现；
-- 变更级别：**格式变更**（工具 Schema、SSE 事件联合、故障文案结构、端点契约）
-  必须升协议版本并同步 §9 对应表；**文案微调**（提示词措辞）随代码提交即可；
+- 本协议版本 **v1.3**（2026-10-14）—— v1.0（2026-10-10）固化对接契约、
+  v1.1（2026-10-13）新增控制台侧的对话验证 / 意图分发事件与路由（§4.1），
+  v1.2 给沙盒请求体加上可选的 `overrides`（§4、§5.2）并把连接档案收敛为
+  **沙盒与对话验证共用的全局大模型配置**（§5.3），v1.3 新增 Agent 自带领域
+  工具的执行边界（§3.4）并收紧登记口径（§6）；NOVA 侧的工具 Schema 与评分
+  口径未变；
+- 变更级别：**格式变更**（工具 Schema、SSE 事件联合、故障文案结构、端点契约、
+  请求体字段）必须升协议版本并同步 §9 对应表；**文案微调**（提示词措辞）
+  随代码提交即可；
 - 涉及评分口径的任何变更必须同步 `docs/nova-standard.md`（`AGENTS.md` 约束 5），
   本文件不新增指标。
 
@@ -282,10 +367,12 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 | §3.1 任务书 / 静态校验 | `lib/nova/executors/live.ts:49-81`；`lib/nova/constants.ts` → `DEFAULT_SYSTEM_PROMPT` |
 | §3.2 工具 Schema | `lib/nova/executors/tools.ts:38-86` |
 | §3.3 故障回传格式 | `lib/nova/executors/tools.ts:161-226`；`live.ts:391-463` |
-| §4 SSE 事件 | `lib/nova/executor.ts:91-104`；`api/sandbox/run/route.ts:84-152` |
+| §3.4 Agent 自带领域工具 | `packages/agent-kit/tools.mjs`（defineTool / createDomainToolkit）；`packages/agent-kit/service.mjs`（createChatHandler 的工具循环）；`playground/nova-travel/tools.mjs`；`playground/nova-writer/tools.mjs` |
+| §4 SSE 事件 | `lib/nova/executor.ts:92-105`；`api/sandbox/run/route.ts:104-172` |
+| §4.1 对话验证 / 意图分发 | `lib/nova/intent.ts`（parseIntentOutput）；`api/agents/intent/route.ts`；`api/agents/dispatch/route.ts`；`api/agents/converse/route.ts`；`executors/converse-request.ts`（共享校验） |
 | §5.1 探针安全 | `api/agents/probe/route.ts:15-41,107-197` |
-| §5.2 沙盒路由约束 | `api/sandbox/run/route.ts:19-234` |
-| §5.3 密钥 / 待验证口径 | `lib/nova/local-agents.ts:38-43,77-118`；`lib/nova/run-store.ts` → `verifiedAgents` |
+| §5.2 沙盒路由约束 | `api/sandbox/run/route.ts:19-254` |
+| §5.3 密钥 / 全局大模型配置 | `lib/nova/local-agents.ts:38-43,77-118`；`lib/nova/llm-profiles.ts`；`lib/nova/env-llm.ts`；`hooks/use-llm-profiles.ts`；`lib/nova/run-store.ts` → `verifiedAgents` |
 | §5.4 注入服从 | `lib/nova/executors/tools.ts:228-243`；`live.ts:487-508` |
 | §6 登记规则 | `lib/nova/local-agents.ts:23-48,126-154` |
 | §7 轮次 / 排布 / 交卷 | `lib/nova/executors/live.ts:46,242-266`；`chaos.ts:64-98` |

@@ -61,32 +61,26 @@ try {
 }
 
 /* ---------- 4. 类型与规范 ---------- */
+// tsc 依赖 Next 生成的全局路由类型（.next/types），先按 AGENTS.md §3.1 同一条
+// 命令生成，再一并跑 typecheck + biome。不能在根目录用 `npx tsc`：typescript
+// 不是根依赖，npx 会去装那个假 tsc 包而不是真正的类型检查。
 try {
-  run("npx", ["tsc", "--noEmit"]);
-  notes.push("类型检查通过");
+  run("pnpm", ["--filter", "@chaos-design/web", "exec", "next", "typegen"]);
+  run("pnpm", ["run", "check"]);
+  notes.push("类型检查与代码规范检查通过");
 } catch {
-  failures.push("类型检查未通过，运行 npm run typecheck 查看详情。");
-}
-
-try {
-  run("npx", ["biome", "check"]);
-  notes.push("代码规范检查通过");
-} catch {
-  failures.push("lint 未通过，运行 npm run lint:fix 修复。");
+  failures.push("类型检查 / lint 未通过，运行 pnpm run check 查看详情。");
 }
 
 /* ---------- 5. 测试 ---------- */
 if (preflight.requireTests) {
   try {
-    run(process.execPath, [
-      "node_modules/vitest/vitest.mjs",
-      "run",
-      "tests/unit",
-      "tests/integration",
-    ]);
+    // vitest 是各包（web / nova-config）的 devDependency，不是根依赖；
+    // tests/unit、tests/integration 也是 web 包内的相对路径。统一走 pnpm -r。
+    run("pnpm", ["run", "test"]);
     notes.push("单元与集成测试通过");
   } catch {
-    failures.push("测试未通过，运行 npm run test 查看详情。");
+    failures.push("测试未通过，运行 pnpm run test 查看详情。");
   }
 }
 

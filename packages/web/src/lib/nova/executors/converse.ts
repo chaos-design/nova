@@ -105,6 +105,7 @@ export async function* runConverseTurn(
       step: {
         step: state.step,
         round: 0,
+        kind: "system",
         level: "warn",
         actor: "nova",
         message: `用户消息检出 ${risks.length} 条越权指令特征`,
@@ -132,6 +133,21 @@ export async function* runConverseTurn(
       if (signal?.aborted) break;
       state.round = round;
 
+      state.step += 1;
+      yield {
+        type: "step",
+        step: {
+          step: state.step,
+          round,
+          kind: "call",
+          level: "info",
+          actor: "nova",
+          message: `发起第 ${round} 次模型调用`,
+          detail: `上下文 ${messages.length} 条消息 · 已用 ${state.usage.totalTokens} tokens`,
+        },
+      };
+
+      const callStartedAt = Date.now();
       const completion = await chatCompletion(settings, {
         model: settings.model,
         messages,
@@ -140,11 +156,32 @@ export async function* runConverseTurn(
         maxTokens: settings.maxTokens,
         signal,
       });
+      const callMs = Date.now() - callStartedAt;
 
       state.usage.calls += 1;
       state.usage.promptTokens += completion.usage.promptTokens;
       state.usage.completionTokens += completion.usage.completionTokens;
       state.usage.totalTokens += completion.usage.totalTokens;
+
+      state.step += 1;
+      yield {
+        type: "step",
+        step: {
+          step: state.step,
+          round,
+          kind: "call",
+          level: "info",
+          actor: "nova",
+          durationMs: callMs,
+          message: "模型返回",
+          detail:
+            `入 ${completion.usage.promptTokens} / 出 ${completion.usage.completionTokens} tokens` +
+            ` · ${completion.toolCalls.length > 0 ? `请求 ${completion.toolCalls.length} 个工具调用` : "无工具调用"}` +
+            (completion.content
+              ? ` · 附带 ${completion.content.length} 字推理`
+              : ""),
+        },
+      };
 
       // 模型不再请求工具：这就是本回合的最终回复。
       // 最终消息必须进 messages，否则 replyMessages 缺了它，
@@ -166,7 +203,8 @@ export async function* runConverseTurn(
             level: "success",
             actor: "agent",
             message: "给出最终回复，对话轮结束",
-            detail: truncate(completion.content, 140),
+            kind: "call",
+            detail: truncate(completion.content, 600),
           },
         };
         break;
@@ -185,10 +223,11 @@ export async function* runConverseTurn(
           step: {
             step: state.step,
             round,
+            kind: "think",
             level: "info",
             actor: "agent",
-            message: truncate(completion.content, 90),
-            detail: `模型思考 · 累计 ${state.usage.totalTokens} tokens`,
+            message: "模型推理",
+            detail: completion.content,
           },
         };
       }
@@ -199,7 +238,9 @@ export async function* runConverseTurn(
 
         const name = call.function.name;
         const args = parseToolArgs(call.function.arguments);
+        const toolStartedAt = Date.now();
         const outcome = await runConverseTool(name, args, settings, signal);
+        const toolMs = Date.now() - toolStartedAt;
 
         if (outcome.usage) {
           state.usage.calls += outcome.usage.calls;
@@ -241,6 +282,7 @@ export async function* runConverseTurn(
             step: {
               step: state.step,
               round,
+              kind: "system",
               level: "error",
               actor: "nova",
               message: "检测到越权检索已执行",
@@ -256,12 +298,14 @@ export async function* runConverseTurn(
           step: {
             step: state.step,
             round,
+            kind: "call",
             level: outcome.ok
               ? outcome.records === 0
                 ? "warn"
                 : "info"
               : "warn",
             actor: "agent",
+            durationMs: toolMs,
             message: `调用 ${name}(${truncate(JSON.stringify(args), 56)})`,
             detail: [
               outcome.ok

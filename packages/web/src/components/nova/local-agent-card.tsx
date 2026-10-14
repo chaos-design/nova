@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, ExternalLink, Terminal } from "lucide-react";
+import { Check, Copy, ExternalLink, Play, Terminal } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -77,7 +77,20 @@ export function LocalAgentCard({ agent }: { agent: LocalAgentEntry }) {
 
       <CardFooter className="gap-2">
         <EnvSnippetButton agent={agent} />
-        <Button variant="ghost" size="sm" asChild className="ml-auto">
+        {/* 快捷验证：探针 + 冒烟用例在对话页一次跑完（用例常量单源，
+            深链参数由服务端页面解析） */}
+        <Button variant="secondary" size="sm" asChild>
+          <Link
+            href={{
+              pathname: "/converse",
+              query: { agent: agent.id, case: "research" },
+            }}
+          >
+            快捷验证
+            <Play data-icon="inline-end" />
+          </Link>
+        </Button>
+        <Button variant="ghost" size="sm" asChild>
           {/* 站内路由用 Link：整页刷新会丢掉客户端状态，也绕过 typedRoutes */}
           <Link href="/sandbox">
             去沙盒

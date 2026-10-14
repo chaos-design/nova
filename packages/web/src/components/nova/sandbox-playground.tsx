@@ -4,6 +4,7 @@ import { cn } from "cn";
 import { Play, RotateCcw, ShieldAlert, Sparkles, Square } from "lucide-react";
 import { useState } from "react";
 import { AgentIdentity } from "@/components/nova/agent-identity";
+import { LlmConfigDialog } from "@/components/nova/llm-config-dialog";
 import { LogStream } from "@/components/nova/log-stream";
 import { ScoreGauge } from "@/components/nova/score-gauge";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +29,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { useLlmProfiles } from "@/hooks/use-llm-profiles";
 import { useSandboxRun } from "@/hooks/use-sandbox-run";
 import {
   type AgentProfile,
@@ -39,6 +41,7 @@ import {
   effectiveIntensity,
   gradeMeta,
   gradeOf,
+  type LlmEnvDefault,
   type LocalAgentEntry,
   localAgentProfile,
   MODEL_REGISTRY,
@@ -53,9 +56,10 @@ const INTENSITY_MAX = 100;
 /**
  * 沙盒模拟器。
  *
- * 结构上分成两条独立的数据流：
- * - 配置态（Agent / 环境 / 提示词 / 混沌注入）由本组件持有；
- * - 运行态（日志、进度、得分）由 `useSimulationRun` 持有。
+ * 结构上分成三条独立的数据流：
+ * - 配置态（Agent / 大模型连接 / 环境 / 提示词 / 混沌注入）由本组件持有；
+ * - 连接档案由 `useLlmProfiles` 持有（与对话验证共享的全局配置）；
+ * - 运行态（日志、进度、得分）由 `useSandboxRun` 持有。
  *
  * 配置一变，剧本立即重算并自动回到初始态 —— 这条约束由 hook 保证，
  * 组件本身不需要处理"配置变更时的收尾"。
@@ -63,11 +67,14 @@ const INTENSITY_MAX = 100;
 export function SandboxPlayground({
   agents,
   localAgents = [],
+  llmDefault,
 }: {
   /** 可被投放的 Agent 档案（由页面在服务端按本地登记派生） */
   agents: readonly AgentProfile[];
   /** 已登记的本地 Agent（端点与密钥变量名在这里） */
   localAgents?: readonly LocalAgentEntry[];
+  /** 本地 .env 解析出的全局大模型默认连接（密钥不下发） */
+  llmDefault: LlmEnvDefault;
 }) {
   const [config, setConfig] = useState<SimulationConfig>(() =>
     createSandboxConfig(agents[0]?.id ?? ""),
@@ -80,6 +87,10 @@ export function SandboxPlayground({
       ? localAgentProfile(localEntry)
       : agents.find((item) => item.id === config.agentId)) ?? null;
   const run = useSandboxRun();
+
+  // 全局大模型配置：与对话验证共用同一份档案，默认档案取本地 .env
+  const llm = useLlmProfiles(llmDefault);
+  const [llmEditorOpen, setLlmEditorOpen] = useState(false);
 
   const environment = ENVIRONMENTS.find(
     (item) => item.id === config.environment,
@@ -101,8 +112,8 @@ export function SandboxPlayground({
 
   const start = () => {
     if (!agent) return;
-    // 档案由服务端按 agentId 反查，客户端只传 id
-    void run.runRemote(config);
+    // 档案由服务端按 agentId 反查，客户端只传 id 与连接覆盖值
+    void run.runRemote(config, llm.overrides);
   };
 
   return (
@@ -125,13 +136,6 @@ export function SandboxPlayground({
                 <p className="mt-1 text-[0.6875rem] leading-relaxed text-muted-foreground">
                   沙盒只保留真实执行一条路径：混沌注入在服务端生效，
                   结果完全取决于被测 Agent 的真实行为。
-                  {localEntry && (
-                    <span className="text-nova-cyan">
-                      {" "}
-                      将调用 {localEntry.endpoint} 的 {localEntry.model} 模型
-                      （密钥取自环境变量 {localEntry.apiKeyEnv}）。
-                    </span>
-                  )}
                 </p>
               </div>
             </div>
@@ -197,6 +201,61 @@ export function SandboxPlayground({
                   登记一条，或跑起仓库自带的执行体。
                 </p>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="sandbox-llm">大模型连接</Label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[0.6875rem] text-muted-foreground hover:text-foreground"
+                  onClick={() => setLlmEditorOpen(true)}
+                  disabled={running}
+                >
+                  配置…
+                </Button>
+              </div>
+              <Select
+                value={llm.activeProfile.id}
+                onValueChange={llm.selectProfile}
+                disabled={running}
+              >
+                <SelectTrigger id="sandbox-llm" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {llm.allProfiles.map((profile) => (
+                    <SelectItem key={profile.id} value={profile.id}>
+                      {profile.name} · {profile.model}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[0.6875rem] leading-relaxed text-muted-foreground">
+                {llm.overridden ? (
+                  <>
+                    本次将改用{" "}
+                    <span className="text-nova-cyan">
+                      {llm.activeProfile.endpoint}
+                    </span>{" "}
+                    的 {llm.activeProfile.model}；评分仍归到选中的 Agent 名下。
+                  </>
+                ) : (
+                  <>
+                    默认取仓库根 .env 的 NOVA_LLM_BASE_URL / NOVA_LLM_MODEL，
+                    沿用目标 Agent 的登记连接
+                    {localEntry
+                      ? `（${localEntry.model} · ${localEntry.endpoint}）`
+                      : ""}
+                    ，密钥读环境变量{" "}
+                    {localEntry?.apiKeyEnv ?? "NOVA_LLM_API_KEY"}。
+                  </>
+                )}
+              </p>
+              <p className="text-[0.625rem] leading-relaxed text-muted-foreground/70">
+                与「对话验证」共用同一份全局配置。
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -525,6 +584,18 @@ export function SandboxPlayground({
           })}
         </CardContent>
       </Card>
+
+      {/* 全局大模型配置弹窗：与对话验证共用同一份档案 */}
+      <LlmConfigDialog
+        open={llmEditorOpen}
+        onOpenChange={setLlmEditorOpen}
+        envProfile={llm.envProfile}
+        profiles={llm.profiles}
+        activeProfileId={llm.activeProfileId}
+        onSelect={llm.selectProfile}
+        onSave={llm.saveProfile}
+        onDelete={llm.deleteProfile}
+      />
     </div>
   );
 }
