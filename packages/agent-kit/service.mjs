@@ -12,6 +12,7 @@
 
 import { createServer } from "node:http";
 import { toClientResponse } from "./persona.mjs";
+import { parseToolArgs } from "./tools.mjs";
 
 /** 携带 HTTP 状态码的错误：服务按状态码回给调用方，NOVA 侧可读 */
 export class HttpError extends Error {
@@ -79,18 +80,25 @@ export function createUpstreamCaller(upstream) {
 
 /**
  * 组装 chat/completions 处理器：模型标识校验 → 人格整形 → 上游转发 →
- * 以登记的模型 id 回显。
+ * 以登记的模型 id 回显。带领域工具时，中间多一段「就近自执行」循环。
+ *
+ * 工具的两类归属在 `tools.mjs` 里定义：Agent 自己的工具就地真实执行、
+ * 结果只回灌给上游；NOVA 的工具（`external_search` / `summarize`）
+ * 原样透传回调用方，由 NOVA 执行器真实代执行 —— 被观测到的工具调用
+ * 因此仍然只有 NOVA 那一套，评分口径不受影响。
  *
  * @param {object} options
  * @param {string} options.model 本端点登记的模型 id（协议 §1：只服务这一个 id）
  * @param {{ prompt: string, toUpstreamPayload: Function }} options.personaLayer createPersonaLayer 的产物
  * @param {(payload: object) => Promise<object>} options.upstream createUpstreamCaller 的产物
  * @param {string} options.upstreamModel 上游真实模型 id（生产恒为 agent.llm.model）
- * @returns {(body: object, deps?: { upstream?: Function, upstreamModel?: string }) => Promise<object>}
- *   deps 仅测试注入用：换桩上游 / 固定上游模型，脱离 .env 做全量断言
+ * @param {ReturnType<import("./tools.mjs").createDomainToolkit>} [options.toolkit]
+ *   createDomainToolkit 的产物；缺省时行为与不带工具完全一致
+ * @returns {(body: object, deps?: { upstream?: Function, upstreamModel?: string, toolkit?: object }) => Promise<object>}
+ *   deps 仅测试注入用：换桩上游 / 固定上游模型 / 换工具层，脱离 .env 做全量断言
  */
 export function createChatHandler(options) {
-  const { model, personaLayer, upstream, upstreamModel } = options;
+  const { model, personaLayer, upstream, upstreamModel, toolkit } = options;
 
   return async function handleChat(body, deps = {}) {
     // 模型标识一致性（协议 §1）：只服务登记的那个 id，错了要大声失败
@@ -102,24 +110,189 @@ export function createChatHandler(options) {
     }
 
     const callUpstream = deps.upstream ?? upstream;
-    const completion = toClientResponse(
-      await callUpstream(
-        personaLayer.toUpstreamPayload(
-          body,
-          deps.upstreamModel ?? upstreamModel,
-        ),
-      ),
-      model,
+    const tools = deps.toolkit === undefined ? toolkit : deps.toolkit;
+
+    const payload = personaLayer.toUpstreamPayload(
+      body,
+      deps.upstreamModel ?? upstreamModel,
     );
 
-    if (!completion) {
-      throw new HttpError(
-        502,
-        "上游模型响应缺少 choices[0].message，无法转发。",
-      );
+    // 领域工具并进 tools：模型只看到一份候选清单，选谁由它自己决定
+    if (tools?.enabled) {
+      payload.tools = [...(payload.tools ?? []), ...tools.definitions];
+      payload.tool_choice = payload.tool_choice ?? "auto";
     }
 
-    return completion;
+    const messages = payload.messages;
+    // NOVA 按响应里的 usage 记账，自执行轮次消耗的 token 必须一起报上去，
+    // 否则 Agent 侧的工具循环在成本口径上等于没发生过
+    const usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+    let localRounds = 0;
+
+    for (;;) {
+      // 轮次用尽：剥掉工具再问一次，强制收口成文本，杜绝无限循环。
+      // 判断放在请求之前，省掉一次注定要被丢弃的探测调用。
+      if (tools?.enabled && localRounds >= tools.maxRounds) {
+        const forced = await forward(messages, { withoutTools: true });
+        return withUsage(stripLocalCalls(forced, tools.names), usage);
+      }
+
+      const completion = await forward(messages);
+      const message = completion.choices[0].message;
+      const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+      const localCalls = calls.filter((call) =>
+        tools?.names?.has(call?.function?.name),
+      );
+      const forwardedCalls = calls.filter(
+        (call) => !tools?.names?.has(call?.function?.name),
+      );
+
+      // 没有属于本 Agent 的工具要执行：原样交给调用方
+      // （要么是纯文本结论，要么是 NOVA 自己的工具调用）
+      if (localCalls.length === 0) return withUsage(completion, usage);
+
+      localRounds += 1;
+
+      // 自执行的领域工具：把模型这一轮请求的本地工具记进对话，
+      // 逐个真实执行后以 role=tool 回灌，下一轮由模型自己消化
+      messages.push({
+        role: "assistant",
+        content: message.content ?? null,
+        tool_calls: localCalls,
+      });
+
+      const notes = [];
+      for (const call of localCalls) {
+        const name = call?.function?.name ?? "";
+        const args = parseToolArgs(call?.function?.arguments);
+        const outcome = await (tools?.run
+          ? tools.run(name, args)
+          : Promise.resolve({
+              ok: false,
+              content: `错误：未知工具 ${name}。`,
+            }));
+
+        messages.push({
+          role: "tool",
+          tool_call_id: call?.id ?? "",
+          content: outcome.content,
+        });
+
+        console.log(
+          `领域工具 · ${name}(${JSON.stringify(args).slice(0, 80)}) · ${outcome.ok ? `${outcome.records} 条` : "失败"}`,
+        );
+        notes.push(describeLocalCall(name, args, outcome));
+      }
+
+      // 混合轮：本地工具已经执行完，同一轮里属于 NOVA 的调用原样回传；
+      // 本地结果只在 content 里留一份可读摘要，保证下一轮上下文不断档
+      if (forwardedCalls.length > 0) {
+        return withUsage(
+          withForwardedCalls(completion, forwardedCalls, notes),
+          usage,
+        );
+      }
+    }
+
+    /** 向上游要一轮结果；usage 统一在这里累计 */
+    async function forward(currentMessages, { withoutTools = false } = {}) {
+      const raw = await callUpstream({
+        ...payload,
+        messages: currentMessages,
+        ...(withoutTools
+          ? { tools: undefined, tool_choice: undefined }
+          : { tools: payload.tools, tool_choice: payload.tool_choice }),
+      });
+
+      usage.promptTokens += num(raw?.usage?.prompt_tokens);
+      usage.completionTokens += num(raw?.usage?.completion_tokens);
+      usage.totalTokens += num(raw?.usage?.total_tokens);
+
+      const completion = toClientResponse(raw, model);
+      if (!completion) {
+        throw new HttpError(
+          502,
+          "上游模型响应缺少 choices[0].message，无法转发。",
+        );
+      }
+      return completion;
+    }
+  };
+}
+
+function num(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/** 把累计 usage 写回待返回的补全体（NOVA 按它记账） */
+function withUsage(completion, usage) {
+  return {
+    ...completion,
+    usage: {
+      prompt_tokens: usage.promptTokens,
+      completion_tokens: usage.completionTokens,
+      total_tokens: usage.totalTokens,
+    },
+  };
+}
+
+/** 混合轮：只把 NOVA 的工具调用交回去，本地结果降级为 content 摘要 */
+function withForwardedCalls(completion, forwardedCalls, notes) {
+  const message = completion.choices[0].message;
+
+  return {
+    ...completion,
+    choices: [
+      {
+        ...completion.choices[0],
+        finish_reason: "tool_calls",
+        message: {
+          role: "assistant",
+          content:
+            [message.content, ...notes].filter(Boolean).join("\n\n") || null,
+          tool_calls: forwardedCalls,
+        },
+      },
+    ],
+  };
+}
+
+/** 本地工具调用的可读一行，进 content 供下一轮上下文使用 */
+function describeLocalCall(name, args, outcome) {
+  const argText = JSON.stringify(args ?? {});
+  const head = `已执行本地工具 ${name}(${argText.length > 80 ? `${argText.slice(0, 80)}…` : argText})`;
+  return `${head}：${outcome.content.slice(0, 400)}`;
+}
+
+/**
+ * 收口轮兜底：即使剥掉工具后模型仍塞回本 Agent 的工具调用，也不能把它
+ * 转给 NOVA —— NOVA 只认自己那套工具，未知工具会变成一条工具失败记录，
+ * 白白算进被测 Agent 的账上。
+ */
+function stripLocalCalls(completion, names) {
+  if (!names || names.size === 0) return completion;
+
+  const message = completion.choices[0].message;
+  const kept = (message.tool_calls ?? []).filter(
+    (call) => !names.has(call?.function?.name),
+  );
+
+  if (kept.length === (message.tool_calls ?? []).length) return completion;
+
+  return {
+    ...completion,
+    choices: [
+      {
+        ...completion.choices[0],
+        finish_reason: kept.length > 0 ? "tool_calls" : "stop",
+        message: {
+          role: "assistant",
+          content: message.content ?? null,
+          ...(kept.length > 0 ? { tool_calls: kept } : {}),
+        },
+      },
+    ],
   };
 }
 

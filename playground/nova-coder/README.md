@@ -57,9 +57,12 @@ NOVA 执行器：真实代执行 external_search / summarize 并回灌
 
 ## 注册与配置
 
-- 已登记为 `agt-local-coder`（`packages/web/src/lib/nova/local-agents.ts`）；
+- **默认不登记**：`LOCAL_AGENTS` 里现在只有 `agt-local-travel` 与
+  `agt-local-writer`（登记口径要求 Agent 有可判定的职责边界，本包与其在
+  功能上重复）。需要拿它做对照实验时，按 [`nova-research`](../nova-research)
+  README「注册与配置」一节的形式把 `agt-local-coder` 补回登记表（端口 43112）；
 - 端口经 `NOVA_CODER_PORT` 调整（默认 43112），模型标识在
   `agent.config.yaml`，上游端点沿用根配置的 `agent.llm`（`.env` 的
   `NOVA_LLM_*`）—— 本服务自身不持有任何密钥，也不要求调用方鉴权。
 
-完整接入背景见 `docs/local-agent.md` §6.2。
+完整接入背景见 `docs/local-agent.md` §6.4。

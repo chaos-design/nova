@@ -1,0 +1,25 @@
+{
+  "name": "@chaos-design/nova-travel",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "NOVA 领域专家 Agent：行程规划师（OpenAI 兼容人格代理端点）",
+  "type": "module",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@chaos-design/agent-kit": "workspace:*",
+    "@chaos-design/config": "workspace:*"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^3.2.7",
+    "vitest": "^3.2.7"
+  }
+}

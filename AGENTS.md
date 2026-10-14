@@ -14,10 +14,12 @@
 | :--- | :--- | :--- |
 | `packages/web` | `@chaos-design/web` | NOVA 控制台（Next.js 应用） |
 | `packages/nova-config` | `@chaos-design/config` | 共享配置加载器（纯 Node ESM，被 web 与 Agent 共用） |
-| `packages/agent-kit` | `@chaos-design/agent-kit` | 领域 Agent 共享基建：persona 层 + OpenAI 兼容服务骨架（playground 各执行体与脚手架产物复用） |
+| `packages/agent-kit` | `@chaos-design/agent-kit` | 领域 Agent 共享基建：persona 层 + 领域工具层 + OpenAI 兼容服务骨架（playground 各执行体与脚手架产物复用） |
 | `playground/nova-local` | `@chaos-design/nova-local` | 本地验证用 OpenAI 兼容 Agent 服务（规则执行体，不进控制台） |
-| `playground/nova-research` | `@chaos-design/nova-research` | 领域专家 Agent：调研专员（真实大模型人格代理，端口 43111） |
-| `playground/nova-coder` | `@chaos-design/nova-coder` | 领域专家 Agent：工程搭档（调研专员的意图分发对照，端口 43112） |
+| `playground/nova-travel` | `@chaos-design/nova-travel` | 领域专家 Agent：行程规划师（真实大模型人格代理 + 自带地理/天气/汇率工具，端口 43113，已登记） |
+| `playground/nova-writer` | `@chaos-design/nova-writer` | 领域专家 Agent：文案写手（真实大模型人格代理 + 自带文本体检/百科核验工具，端口 43114，已登记） |
+| `playground/nova-research` | `@chaos-design/nova-research` | 参考实现：调研专员（纯人格代理，端口 43111，未登记） |
+| `playground/nova-coder` | `@chaos-design/nova-coder` | 参考实现：工程搭档（纯人格代理，端口 43112，未登记） |
 
 ## 1. 项目是什么
 

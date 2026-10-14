@@ -47,15 +47,23 @@ describe("LOCAL_AGENTS 的 e2e 门控", () => {
     );
   });
 
-  it("其余登记不受门控影响：四个真实端点条目恒在", async () => {
+  it("其余登记不受门控影响：两个领域 Agent 条目恒在", async () => {
     const ids = LOCAL_AGENTS.map((item) => item.id);
+    for (const id of ["agt-local-travel", "agt-local-writer"]) {
+      expect(ids).toContain(id);
+    }
+  });
+
+  it("登记表只收真实大模型端点：裸模型与离线执行体都不在", () => {
+    const ids = LOCAL_AGENTS.map((item) => item.id);
+
+    // 裸模型端点（无领域人格 / 无工具）与规则执行体都不该出现在登记表里
     for (const id of [
       "agt-local-llm",
       "agt-local-agnes-25",
-      "agt-local-research",
-      "agt-local-coder",
+      "agt-local-nova",
     ]) {
-      expect(ids).toContain(id);
+      expect(ids).not.toContain(id);
     }
   });
 });

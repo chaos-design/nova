@@ -138,6 +138,9 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 | `external_search` | `query: string`（必填）、`limit: integer`（1 ~ 20，缺省 7） | `additionalProperties: false` |
 | `summarize` | `records: string[]`（必填） | `additionalProperties: false` |
 
+这两个是**必需支持的下限**，不是全部：Agent 可以在自己的端点里再声明并就地执行
+额外的领域工具（§3.4）。
+
 工具本身是**确定性纯函数**：同一 `query` 永远返回同一结果集；混沌不是让工具
 不稳定，而是在稳定工具外面包一层按剧本作恶的代理（`tools.ts:4-12`）。
 一次工具调用**最多注入一种故障**，且混沌只作用于 `external_search`
@@ -170,6 +173,33 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 - `toolFailure` 属**硬故障**：文案已明示熔断器打开，重试同一检索式大概率
   再失败并白白消耗轮次——正确动作是切换备用路径（有素材先 `summarize`，
   无素材开新侧面）。
+
+### 3.4 Agent 自带领域工具（可选，v1.3）
+
+Agent 可以在自己的端点里声明**额外的工具**并就地真实执行：请求体里的 `tools`
+是 NOVA 下发的清单，Agent 可以往里追加自己的工具定义；模型选中它们时，由 Agent
+自己跑完（真实 HTTP 调用 / 真实计算），结果只回灌给上游模型。
+
+分界（这条线不能糊涂）：
+
+| 工具归属 | 处理方式 | 是否进 NOVA 观测面 |
+| :--- | :--- | :--- |
+| Agent 自己声明的领域工具 | 就地执行，以 `role=tool` 回灌给上游模型 | **否** |
+| `external_search` / `summarize` | 必须原样以 `tool_calls` 返回给 NOVA | 是（执行器真实代执行） |
+
+- 同一轮里两类工具混着来：本地工具先执行完，NOVA 的调用仍在**同一次响应**里
+  回传；本地结果以一行文本摘要留在 `choices[0].message.content`，保证下一轮
+  上下文不断档；
+- 自执行轮次有上限（参考实现 3~4 轮），用尽后剥掉工具强制文本收口，
+  并且不会把本地工具名回传给 NOVA（否则会变成一条「未知工具」的失败记录）；
+- 自执行消耗的 token 必须累计进响应的 `usage`，否则 Agent 侧的工具循环在
+  成本口径上等于没发生过；
+- 禁止把 `external_search` 就地执行掉：那会绕过 NOVA 的工具观测与评分口径
+  （§5.4 的服从判定同样建立在可观测的工具调用上）。
+
+参考实现：`packages/agent-kit/tools.mjs`（`defineTool` / `createDomainToolkit`）；
+落地示例：`playground/nova-travel`（地理编码 / 天气 / 汇率）、
+`playground/nova-writer`（文本体检 / 百科术语核验）。
 
 ## 4. SSE 事件协议（NOVA 控制台侧）
 
@@ -291,6 +321,17 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 （`localAgentEnvSnippet` / `localAgentSourceSnippet`，`local-agents.ts:126-154`）。
 向导不代写文件——登记必须走代码评审。
 
+**登记口径**（`local-agents.ts` 头注）：只收**真实大模型端点的真实 Agent** ——
+回复出自真实模型，且有领域人格与可判定的职责边界。两类东西刻意不入表：
+
+| 不收 | 原因 |
+| :--- | :--- |
+| 裸模型端点（直接把上游大模型挂上来） | 没有领域人格 / 工具 / 职责边界，跑出来的分数说明不了任何事 |
+| 规则执行体（`playground/nova-local`） | 回复不出自大模型；只在 `NOVA_E2E=1` 的端到端验证进程里临时登记 |
+
+当前登记：`agt-local-travel`（行程规划师）与 `agt-local-writer`（文案写手），
+两者职责互斥，是 Converse Lab 意图分发的默认验证对象。
+
 ## 7. Agent 开发者速查（对照实现）
 
 | 约束 | 值 / 行为 | 依据 |
@@ -305,11 +346,12 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 
 ## 8. 版本与变更流程
 
-- 本协议版本 **v1.2**（2026-10-13）—— v1.0（2026-10-10）固化对接契约、
-  v1.1（2026-10-13）新增控制台侧的对话验证 / 意图分发事件与路由（§4.1）后，
-  v1.2 给沙盒请求体加上可选的 `overrides`（§4、§5.2），并把连接档案收敛为
-  **沙盒与对话验证共用的全局大模型配置**（§5.3）；Agent 侧端点契约
-  （§1–§3）与评分口径未变；
+- 本协议版本 **v1.3**（2026-10-14）—— v1.0（2026-10-10）固化对接契约、
+  v1.1（2026-10-13）新增控制台侧的对话验证 / 意图分发事件与路由（§4.1），
+  v1.2 给沙盒请求体加上可选的 `overrides`（§4、§5.2）并把连接档案收敛为
+  **沙盒与对话验证共用的全局大模型配置**（§5.3），v1.3 新增 Agent 自带领域
+  工具的执行边界（§3.4）并收紧登记口径（§6）；NOVA 侧的工具 Schema 与评分
+  口径未变；
 - 变更级别：**格式变更**（工具 Schema、SSE 事件联合、故障文案结构、端点契约、
   请求体字段）必须升协议版本并同步 §9 对应表；**文案微调**（提示词措辞）
   随代码提交即可；
@@ -325,6 +367,7 @@ system 消息取用户在沙盒填写的 `systemPrompt`（未填用内置默认�
 | §3.1 任务书 / 静态校验 | `lib/nova/executors/live.ts:49-81`；`lib/nova/constants.ts` → `DEFAULT_SYSTEM_PROMPT` |
 | §3.2 工具 Schema | `lib/nova/executors/tools.ts:38-86` |
 | §3.3 故障回传格式 | `lib/nova/executors/tools.ts:161-226`；`live.ts:391-463` |
+| §3.4 Agent 自带领域工具 | `packages/agent-kit/tools.mjs`（defineTool / createDomainToolkit）；`packages/agent-kit/service.mjs`（createChatHandler 的工具循环）；`playground/nova-travel/tools.mjs`；`playground/nova-writer/tools.mjs` |
 | §4 SSE 事件 | `lib/nova/executor.ts:92-105`；`api/sandbox/run/route.ts:104-172` |
 | §4.1 对话验证 / 意图分发 | `lib/nova/intent.ts`（parseIntentOutput）；`api/agents/intent/route.ts`；`api/agents/dispatch/route.ts`；`api/agents/converse/route.ts`；`executors/converse-request.ts`（共享校验） |
 | §5.1 探针安全 | `api/agents/probe/route.ts:15-41,107-197` |
