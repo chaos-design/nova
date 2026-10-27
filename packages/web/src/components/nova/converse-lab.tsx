@@ -12,6 +12,7 @@ import {
   FileText,
   ListTree,
   LoaderCircle,
+  Lock,
   Plus,
   RotateCcw,
   ShieldAlert,
@@ -179,6 +180,14 @@ export function ConverseLab({
   const [execMode, setExecModeState] = useState<"all" | "intent">("all");
   // 意图分发请求进行中：横幅显示「意图识别中…」
   const [intentPending, setIntentPending] = useState(false);
+  /**
+   * 对话进行中（含意图分发的分类等待期）：配置类操作一律锁到本轮结束。
+   *
+   * 分类期 `runningCount` 还是 0（验证轮尚未创建），但请求已经在飞 —— 此时
+   * 换目标 / 换执行方式 / 再发一条，都会让"这一轮到底发给了谁"变得无法解释。
+   * 因此锁的是 `sending || intentPending`，而不是只看 runningCount。
+   */
+  const locked = sending || intentPending;
   useEffect(() => {
     try {
       const mode = window.localStorage.getItem(EXEC_MODE_KEY);
@@ -227,6 +236,9 @@ export function ConverseLab({
   // 清空是"会话"的语义，因此留在页面上，不沉到全局配置 hook 里
   // （沙盒没有会话概念，不该被拖进这份耦合）。
   const applyProfile = (mutate: () => void) => {
+    // 执行中切换连接会把正在跑的那一轮连同会话一起清掉（下面这行 reset），
+    // 因此锁定期间直接拒绝：入口本来就已置灰，这里兜住其它调用路径
+    if (locked) return;
     mutate();
     for (const id of targetIds) converse.reset(id);
   };
@@ -238,7 +250,9 @@ export function ConverseLab({
   // 一条输入发给选中的 Agent：同时执行 = 广播全部；意图分发 = 服务端
   // 真实 LLM 分类后单发给最合适的一个，分类失败单发首个候选，绝不广播
   const quickSend = (text: string) => {
-    if (selectedAgents.length === 0) return;
+    // 对话进行中不再接受新的投放：一次只验证一轮，避免两轮交织后
+    // 谁的上下文是谁的说不清（按钮侧同样锁住，这里兜住键盘与其它入口）
+    if (locked || selectedAgents.length === 0) return;
     const promptArg = systemPrompt.trim() || undefined;
     if (execMode === "all" || selectedAgents.length === 1) {
       for (const item of selectedAgents) {
@@ -276,7 +290,8 @@ export function ConverseLab({
   };
 
   const submitDraft = () => {
-    if (selectedAgents.length === 0 || draft.trim().length === 0) return;
+    if (locked || selectedAgents.length === 0 || draft.trim().length === 0)
+      return;
     quickSend(draft);
     setDraft("");
   };
@@ -344,6 +359,7 @@ export function ConverseLab({
             localAgents={localAgents}
             agents={agents}
             targetIds={targetIds}
+            locked={locked}
             onToggleAgent={(id) => {
               setTargetIds((prev) => {
                 // 至少保留一个目标：最后一个不可取消
@@ -358,7 +374,7 @@ export function ConverseLab({
           />
           <VerificationCases
             completed={totals.completedTurns}
-            sending={sending}
+            locked={locked}
             disabled={selectedAgents.length === 0}
             onPick={quickSend}
           />
@@ -382,6 +398,7 @@ export function ConverseLab({
             agentNames={selectedAgents.map((item) => item.name)}
             totals={totals}
             runningCount={runningCount}
+            locked={locked}
             onReset={() => {
               for (const id of targetIds) converse.reset(id);
             }}
@@ -421,6 +438,7 @@ export function ConverseLab({
               runningCount={runningCount}
               targetCount={selectedAgents.length}
               intentPending={intentPending}
+              locked={locked}
               onStop={() => {
                 for (const id of targetIds) converse.stop(id);
               }}
@@ -440,6 +458,7 @@ export function ConverseLab({
         open={promptOpen}
         onOpenChange={setPromptOpen}
         value={systemPrompt}
+        locked={locked}
         onSave={saveSystemPrompt}
       />
     </div>
@@ -454,6 +473,7 @@ function VerificationConfig({
   localAgents,
   agents,
   targetIds,
+  locked,
   onToggleAgent,
   execMode,
   onExecModeChange,
@@ -462,6 +482,13 @@ function VerificationConfig({
   agents: readonly AgentProfile[];
   /** 已选中的目标 Agent（多选，广播验证） */
   targetIds: readonly string[];
+  /**
+   * 对话进行中：目标与执行方式一并锁住。
+   *
+   * 这两个控件决定"这一轮发给谁、怎么发"，中途可改等于允许把一次投放的
+   * 配置改成另一种解释；锁到本轮结束再放开。
+   */
+  locked: boolean;
   onToggleAgent: (id: string) => void;
   /** 多目标执行方式：同时执行广播全部 / 意图分发按意图单发 */
   execMode: "all" | "intent";
@@ -484,6 +511,15 @@ function VerificationConfig({
     <Card className="py-0">
       <CardHeaderBlock title="验证配置" hint="勾选多个目标即并行对照验证" />
       <CardContent className="space-y-3 py-3">
+        {locked && (
+          <div className="flex items-start gap-1.5 rounded-lg border border-nova-cyan/25 bg-nova-cyan/6 px-2.5 py-1.5">
+            <Lock className="mt-0.5 size-3 shrink-0 text-nova-cyan" />
+            <span className="text-[0.6875rem] leading-relaxed text-nova-cyan">
+              本轮执行中：目标与执行方式已锁定，对话结束后才能切换。
+            </span>
+          </div>
+        )}
+
         <div className="space-y-2">
           <Label>目标 Agent</Label>
           {/* 等宽行 + max-h 封顶：档案多时区域内滚动，少时以内容为准 */}
@@ -495,12 +531,14 @@ function VerificationConfig({
                   key={item.id}
                   type="button"
                   aria-pressed={active}
+                  disabled={locked}
                   onClick={() => onToggleAgent(item.id)}
                   className={cn(
                     "flex w-full items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-left text-xs transition-colors",
                     active
                       ? "border-nova-accent/40 bg-nova-accent/12 text-nova-accent"
                       : "border-white/10 bg-white/2 text-muted-foreground hover:border-white/20 hover:text-foreground",
+                    locked && "cursor-not-allowed opacity-55",
                   )}
                 >
                   {active ? (
@@ -540,12 +578,14 @@ function VerificationConfig({
                   key={mode}
                   type="button"
                   aria-pressed={execMode === mode}
+                  disabled={locked}
                   onClick={() => onExecModeChange(mode)}
                   className={cn(
                     "rounded-lg border px-2.5 py-1.5 text-xs transition-colors",
                     execMode === mode
                       ? "border-nova-accent/40 bg-nova-accent/12 text-nova-accent"
                       : "border-white/10 bg-white/2 text-muted-foreground hover:border-white/20 hover:text-foreground",
+                    locked && "cursor-not-allowed opacity-55",
                   )}
                 >
                   {label}
@@ -581,12 +621,13 @@ function VerificationConfig({
 
 function VerificationCases({
   completed,
-  sending,
+  locked,
   disabled,
   onPick,
 }: {
   completed: number;
-  sending: boolean;
+  /** 对话进行中：用例一并发不出去（一次只验证一轮） */
+  locked: boolean;
   disabled: boolean;
   onPick: (text: string) => void;
 }) {
@@ -606,7 +647,7 @@ function VerificationCases({
             text={item.text}
             disabled={
               disabled ||
-              sending ||
+              locked ||
               (item.requiresCompletedTurn === true && completed === 0)
             }
             lockedHint={
@@ -691,6 +732,7 @@ function SessionStrip({
   agentNames,
   totals,
   runningCount,
+  locked,
   onReset,
 }: {
   /** 已选目标 Agent 名（多选时聚合展示） */
@@ -703,6 +745,8 @@ function SessionStrip({
     injectionObeyed: boolean;
   };
   runningCount: number;
+  /** 对话进行中（含意图分类等待期）：清空会话同样锁到本轮结束 */
+  locked: boolean;
   onReset: () => void;
 }) {
   const targetLabel =
@@ -739,7 +783,7 @@ function SessionStrip({
         variant="outline"
         size="sm"
         onClick={onReset}
-        disabled={runningCount > 0 || totals.turns === 0}
+        disabled={locked || totals.turns === 0}
       >
         <RotateCcw />
         清空会话
@@ -1101,6 +1145,7 @@ function DraftComposer({
   runningCount,
   targetCount,
   intentPending,
+  locked,
   onStop,
   hasAgent,
   profiles,
@@ -1118,6 +1163,11 @@ function DraftComposer({
   targetCount: number;
   /** 意图识别请求进行中 */
   intentPending: boolean;
+  /**
+   * 对话进行中（含意图分类等待期）：发送位换成「中止执行」，用例入口一并禁用。
+   * 输入框本身不锁 —— 先把下一条写好是被允许的，锁的是"这一轮还没结束就再投一轮"。
+   */
+  locked: boolean;
   onStop: () => void;
   hasAgent: boolean;
   /** 全部连接档案（含内置 .env 默认），供下拉切换 */
@@ -1286,7 +1336,7 @@ function DraftComposer({
               <TooltipContent side="top">已停用</TooltipContent>
             </Tooltip>
 
-            {runningCount > 0 ? (
+            {locked ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -1299,7 +1349,9 @@ function DraftComposer({
                     <Square />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="top">中止执行</TooltipContent>
+                <TooltipContent side="top">
+                  {intentPending ? "中止分发" : "中止执行"}
+                </TooltipContent>
               </Tooltip>
             ) : (
               <Tooltip>
@@ -1525,11 +1577,14 @@ function PromptConfigDrawer({
   open,
   onOpenChange,
   value,
+  locked,
   onSave,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   value: string;
+  /** 对话进行中：抽屉可以打开查看与编辑草稿，但不允许落定 */
+  locked: boolean;
   onSave: (prompt: string) => void;
 }) {
   const [draft, setDraft] = useState("");
@@ -1572,6 +1627,12 @@ function PromptConfigDrawer({
         </div>
 
         <SheetFooter className="gap-2 border-t border-white/8 px-4 py-3">
+          {locked && (
+            <p className="mr-auto flex items-center gap-1.5 text-[0.6875rem] text-nova-cyan">
+              <Lock className="size-3 shrink-0" />
+              本轮执行中：本轮结束后才能保存
+            </p>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -1583,7 +1644,7 @@ function PromptConfigDrawer({
           <Button
             size="sm"
             className="text-xs"
-            disabled={overLimit}
+            disabled={overLimit || locked}
             onClick={() => {
               onSave(draft.trim() ? draft : "");
               onOpenChange(false);
