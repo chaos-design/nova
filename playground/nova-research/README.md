@@ -56,28 +56,10 @@ NOVA 执行器：真实代执行 external_search / summarize 并回灌
 
 ## 注册与配置
 
-- **默认不登记**：`LOCAL_AGENTS` 里现在只有 `agt-local-travel` 与
-  `agt-local-writer`（登记口径要求 Agent 有可判定的职责边界，本包与其在
-  功能上重复）。需要拿它做对照实验时，把下面这条补进
-  `packages/web/src/lib/nova/local-agents.ts` 即可：
-
-  ```ts
-  {
-    id: "agt-local-research",
-    name: "NOVA-RESEARCH",
-    codename: "深度调研员",
-    model: "nova-research-agent",
-    owner: "本地开发",
-    version: "v0.1.0",
-    endpoint: "http://127.0.0.1:43111/v1",
-    apiKeyEnv: "LLM_API_KEY",
-    tagline: "专职调研的领域 Agent：多侧面检索、交叉验证与数据缺口分析",
-    registeredAt: "2026-10-14T00:00:00.000Z",
-  },
-  ```
-
+- 已登记为 `agt-local-research`（`packages/web/src/lib/nova/local-agents.ts`，与
+  行程规划师 / 文案写手同表，四个领域两两互斥）；
 - 端口经 `NOVA_RESEARCH_PORT` 调整（默认 43111），模型标识在
   `agent.config.yaml`，上游端点沿用根配置的 `agent.llm`（`.env` 的
   `NOVA_LLM_*`）—— 本服务自身不持有任何密钥，也不要求调用方鉴权。
 
-完整接入背景见 `docs/local-agent.md` §6.4。
+完整接入背景见 `docs/local-agent.md` §6.2 / §6.4。

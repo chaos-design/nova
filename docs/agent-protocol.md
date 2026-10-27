@@ -252,6 +252,14 @@ Agent 可以在自己的端点里声明**额外的工具**并就地真实执行�
 `/api/agents/intent` 保留为回退路径：dispatch 故障时客户端可退回
 「先分类、后定点执行」的两步编排。
 
+**客户端并发约束（一次只验证一轮）**：一轮对话在飞期间（含意图分发的分类
+等待期），控制台把「目标 Agent 勾选 / 执行方式 / 系统提示词保存 / 清空会话 /
+验证用例 / 发送」一并锁住，直到本轮结束或点「中止执行」—— 中途换目标会让
+「这一轮到底发给了谁」无法解释。输入框本身不锁：先把下一条写好是允许的。
+判据是 `runningCount > 0 || intentPending`，后者覆盖验证轮创建之前的分类
+等待期（此时 `runningCount` 仍为 0，只看它会漏掉一个真实在飞的请求）。
+实现位置：`components/nova/converse-lab.tsx` 的 `locked`。
+
 ## 5. 安全边界
 
 ### 5.1 探针（`GET {endpoint}/models` 的发起方 = NOVA 服务端）
@@ -329,8 +337,9 @@ Agent 可以在自己的端点里声明**额外的工具**并就地真实执行�
 | 裸模型端点（直接把上游大模型挂上来） | 没有领域人格 / 工具 / 职责边界，跑出来的分数说明不了任何事 |
 | 规则执行体（`playground/nova-local`） | 回复不出自大模型；只在 `NOVA_E2E=1` 的端到端验证进程里临时登记 |
 
-当前登记：`agt-local-travel`（行程规划师）与 `agt-local-writer`（文案写手），
-两者职责互斥，是 Converse Lab 意图分发的默认验证对象。
+当前登记（四个领域刻意互斥，Converse Lab 意图分发的默认验证对象）：
+`agt-local-research`（深度调研员）· `agt-local-coder`（工程搭档）·
+`agt-local-travel`（行程规划师）· `agt-local-writer`（文案写手）。
 
 ## 7. Agent 开发者速查（对照实现）
 

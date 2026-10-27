@@ -83,16 +83,50 @@ const E2E_AGENTS: readonly LocalAgentEntry[] =
  * Agent 真实跑出来的运行记录派生，没有任何预置档案。
  *
  * 登记口径（不可放宽）：只收**真实端点的真实 Agent** —— 回复出自真实大模型，
- * 且带自己的领域工具与职责边界。两类东西刻意不登记：
+ * 且有自己的领域人格与可判定的职责边界。两类东西刻意不登记：
  *
  * 1. 裸模型端点：直接把上游大模型挂上来充数，没有领域人格、没有工具、
  *    没有可判定的职责边界，跑出来的分数说明不了任何事；
  * 2. 规则执行体（`playground/nova-local`）：回复不出自大模型，
  *    只在 `NOVA_E2E=1` 的端到端验证进程里临时登记（见下方 E2E_AGENTS）。
  *
+ * 当前四个领域（调研 / 工程 / 行程 / 文案）刻意互斥：Converse Lab 的
+ * 意图分发靠的就是这份边界可判定（分类提示词的领域描述取自这里的 tagline）。
+ *
  * 自己接入时在这里追加一条登记即可，完整步骤见 `docs/local-agent.md`。
  */
 export const LOCAL_AGENTS: readonly LocalAgentEntry[] = [
+  {
+    // 领域专家 Agent（playground/nova-research）：本地人格代理服务，转发到
+    // agent.llm 指向的真实大模型并注入调研人格，回复必出自真实模型。
+    // 与工程搭档职责互斥，意图分发才有可判定的分界。
+    id: "agt-local-research",
+    name: "NOVA-RESEARCH",
+    codename: "深度调研员",
+    model: "nova-research-agent",
+    owner: "本地开发",
+    version: "v0.1.0",
+    endpoint: "http://127.0.0.1:43111/v1",
+    apiKeyEnv: "LLM_API_KEY",
+    tagline:
+      "专职信息调研的领域 Agent：课题拆解、多侧面检索、交叉验证与数据缺口分析（playground/nova-research）",
+    registeredAt: "2026-10-14T00:00:00.000Z",
+  },
+  {
+    // 调研专员的配套对照：工程实现取向。工程类消息应路由到这里，
+    // 调研类消息应路由给 NOVA-RESEARCH。
+    id: "agt-local-coder",
+    name: "NOVA-CODER",
+    codename: "工程搭档",
+    model: "nova-coder-agent",
+    owner: "本地开发",
+    version: "v0.1.0",
+    endpoint: "http://127.0.0.1:43112/v1",
+    apiKeyEnv: "LLM_API_KEY",
+    tagline:
+      "专职工程实现的领域 Agent：编码、调试排错、重构、脚本与工具链搭建、接口联调（playground/nova-coder）",
+    registeredAt: "2026-10-14T00:00:00.000Z",
+  },
   {
     // 领域专家 Agent（playground/nova-travel）：本地人格代理服务，转发到
     // agent.llm 指向的真实大模型并注入行程规划人格。除人格外，它自带

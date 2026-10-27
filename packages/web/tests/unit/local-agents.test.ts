@@ -47,9 +47,14 @@ describe("LOCAL_AGENTS 的 e2e 门控", () => {
     );
   });
 
-  it("其余登记不受门控影响：两个领域 Agent 条目恒在", async () => {
+  it("其余登记不受门控影响：四个领域 Agent 条目恒在", async () => {
     const ids = LOCAL_AGENTS.map((item) => item.id);
-    for (const id of ["agt-local-travel", "agt-local-writer"]) {
+    for (const id of [
+      "agt-local-research",
+      "agt-local-coder",
+      "agt-local-travel",
+      "agt-local-writer",
+    ]) {
       expect(ids).toContain(id);
     }
   });
@@ -64,6 +69,18 @@ describe("LOCAL_AGENTS 的 e2e 门控", () => {
       "agt-local-nova",
     ]) {
       expect(ids).not.toContain(id);
+    }
+  });
+
+  it("四个 Agent 的模型标识与端点端口两两不同（意图分发才有可判定的候选）", () => {
+    const models = LOCAL_AGENTS.map((item) => item.model);
+    const endpoints = LOCAL_AGENTS.map((item) => item.endpoint);
+
+    expect(new Set(models).size).toBe(LOCAL_AGENTS.length);
+    expect(new Set(endpoints).size).toBe(LOCAL_AGENTS.length);
+    // 领域描述是意图分类的主要线索，缺了分类器只能靠代号猜
+    for (const item of LOCAL_AGENTS) {
+      expect(item.tagline.trim().length).toBeGreaterThan(0);
     }
   });
 });

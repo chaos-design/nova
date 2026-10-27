@@ -18,8 +18,8 @@
 | `playground/nova-local` | `@chaos-design/nova-local` | 本地验证用 OpenAI 兼容 Agent 服务（规则执行体，不进控制台） |
 | `playground/nova-travel` | `@chaos-design/nova-travel` | 领域专家 Agent：行程规划师（真实大模型人格代理 + 自带地理/天气/汇率工具，端口 43113，已登记） |
 | `playground/nova-writer` | `@chaos-design/nova-writer` | 领域专家 Agent：文案写手（真实大模型人格代理 + 自带文本体检/百科核验工具，端口 43114，已登记） |
-| `playground/nova-research` | `@chaos-design/nova-research` | 参考实现：调研专员（纯人格代理，端口 43111，未登记） |
-| `playground/nova-coder` | `@chaos-design/nova-coder` | 参考实现：工程搭档（纯人格代理，端口 43112，未登记） |
+| `playground/nova-research` | `@chaos-design/nova-research` | 领域专家 Agent：深度调研员（纯人格代理，端口 43111，已登记） |
+| `playground/nova-coder` | `@chaos-design/nova-coder` | 领域专家 Agent：工程搭档（纯人格代理，端口 43112，已登记） |
 
 ## 1. 项目是什么
 

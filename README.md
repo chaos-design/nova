@@ -341,15 +341,15 @@ Agent 侧不依赖 web；`projectRoot()` 从进程 cwd 向上找 `pnpm-workspace
   [`docs/nova-standard.md`](docs/nova-standard.md) §3.5。
 
 沙盒只有真实执行一条路径（`packages/web/src/lib/nova/executors/live.ts`）。
-仓库自带两个**带真实领域工具、已登记进控制台**的领域 Agent，
-以及一个零依赖的离线执行体与两个纯人格代理参考实现：
+仓库自带四个**已登记进控制台**的领域 Agent（两个带真实领域工具），
+以及一个零依赖的离线执行体：
 
 ```bash
 pnpm run agent:travel   # http://127.0.0.1:43113/v1（行程规划师 nova-travel-agent）
 pnpm run agent:writer   # http://127.0.0.1:43114/v1（文案写手 nova-writer-agent）
 pnpm run agent:local    # http://127.0.0.1:43110/v1（离线执行体 nova-local-agent）
-pnpm run agent:research # http://127.0.0.1:43111/v1（调研专员，参考实现，未登记）
-pnpm run agent:coder    # http://127.0.0.1:43112/v1（工程搭档，参考实现，未登记）
+pnpm run agent:research # http://127.0.0.1:43111/v1（深度调研员 nova-research-agent）
+pnpm run agent:coder    # http://127.0.0.1:43112/v1（工程搭档 nova-coder-agent）
 ```
 
 - **NOVA-TRAVEL / NOVA-WRITER**：回复来自 `.env` 指向的真实大模型（人格代理），
@@ -358,8 +358,9 @@ pnpm run agent:coder    # http://127.0.0.1:43112/v1（工程搭档，参考实�
   仍是执行器代执行的 `external_search` / `summarize`（协议 §3.4）。已登记为
   `agt-local-travel` / `agt-local-writer`，是 Converse Lab **意图分发**的验证对象；
 - **nova-local**：规则执行体，只用于离线 e2e 与开发者自测，不进控制台；
-- **nova-research / nova-coder**：不带工具的纯人格代理参考实现，默认不登记
-  （登记口径：只收有领域人格与可判定职责边界的真实大模型端点）。
+- **nova-research / nova-coder**：不带工具的纯人格代理（把 NOVA 下发的
+  `external_search` / `summarize` 原样透传，工具由 NOVA 代执行）；
+  四个领域的边界两两互斥，是意图分发验证的四个候选。
 
 **换成真实后端的路径**：替换 `run-store.ts` 内部的读写实现（换成数据库或
 远端 API），对外的函数签名不变，`packages/web/src/lib/nova` 之上的页面与组件都不需要改动。
