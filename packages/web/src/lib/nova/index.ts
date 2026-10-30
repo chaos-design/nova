@@ -17,6 +17,7 @@ export * from "./appearance";
 export * from "./constants";
 export * from "./executor";
 export * from "./executors/chaos";
+export * from "./executors/tools";
 export * from "./format";
 export * from "./intent";
 export * from "./llm-profiles";

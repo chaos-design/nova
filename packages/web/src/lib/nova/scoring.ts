@@ -73,7 +73,11 @@ export function gradeMeta(grade: NovaGrade) {
 
 /** 距离下一档评级还差多少分，已达最高档返回 0 */
 export function scoreGapToNextGrade(score: number): number {
-  const next = GRADE_THRESHOLDS.find((item) => item.min > score);
+  // 「下一档」是**阈值最低的那一档**，不是数组里第一个更高的档：
+  // 从 0 分看，下一档是 B（72），不是 S（92）。
+  const next = GRADE_THRESHOLDS.filter((item) => item.min > score).sort(
+    (a, b) => a.min - b.min,
+  )[0];
   if (!next) return 0;
   return Math.round((next.min - score) * 10) / 10;
 }
@@ -143,6 +147,12 @@ export function averageCapabilities(
     const items = agents
       .map((agent) => agent.capabilities.find((c) => c.vector === vector.id))
       .filter((item): item is CapabilityScore => item !== undefined);
+
+    // 整套档案都没测过这个向量：均值为空。按缺失项口径记 0，
+    // 而不是让 0/0 的 NaN 顺着图表传到界面上。
+    if (items.length === 0) {
+      return { vector: vector.id, score: 0, delta: 0, readings: [] };
+    }
 
     const readings = items[0]?.readings.map((reading, index) => {
       const values = items

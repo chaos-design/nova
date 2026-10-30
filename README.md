@@ -195,9 +195,10 @@ NOVA_AGENT_PORT=43112 pnpm run agent:local
 
 ```
 packages/web/tests/
-├── unit/                        # 纯领域逻辑：scoring / verdict
+├── unit/                        # 纯领域逻辑：scoring / verdict / plan-* 验收用例
 ├── integration/
-│   └── agent-protocol.test.ts   # 真起 Agent 进程，走 HTTP 验证协议与完整链路
+│   ├── agent-protocol.test.ts   # 真起 Agent 进程，走 HTTP 验证协议与完整链路
+│   └── plan-*.test.ts           # 路由校验与桩模型全链路（不依赖外部模型）
 └── helpers/
     └── spawn-agent.mjs          # 子进程拉起器（向上找 monorepo 根定位 Agent 入口）
 
@@ -211,6 +212,7 @@ playground/nova-local/tests/
 
 | 命令 | 作用 | 依赖 |
 | :--- | :--- | :--- |
+| `pnpm run verify` | 按 [`docs/verification-plan.md`](docs/verification-plan.md) 跑 14 个任务，并校验任务覆盖与文档一致性 | — |
 | `pnpm run test:unit` | 各包单元测试 | — |
 | `pnpm run test:integration` | web 集成测试（自动拉起 Agent 子进程） | — |
 | `pnpm run test:e2e` | 全栈端到端：探测 → 沙盒执行 → 落库 → 页面可读 | 控制台与 Agent（脚本会自动拉起缺失的那个） |

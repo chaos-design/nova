@@ -51,7 +51,8 @@ export const INTENT_TIMEOUT_MS = 15_000;
 /**
  * 解析分类输出，从候选里确定唯一目标。
  *
- * 解析逐级放宽：输出包含 id 原文 → 包含名称 → 兜底落第一个候选。
+ * 解析逐级放宽：精确等于 id → 包含 id（取最长）→ 包含名称（取最长）→
+ * 兜底落第一个候选。取最长是为了避免候选 id 互为前缀时短 id 抢先命中。
  * 兜底**绝不广播**——意图分发的语义是单发，宁可单调也不能把同一
  * 问题重复投递给多个 Agent。匹配不区分大小写：模型回 `NOVA-RESEARCH`
  * 或 `nova-research-agent`（含名称前缀的模型 id）都能命中对应候选。
@@ -65,18 +66,45 @@ export function parseIntentOutput(
   if (candidates.length === 0) return null;
 
   const text = output.trim();
-  const hitById = candidates.find(
-    (item) => item.id.length > 0 && includesIgnoreCase(text, item.id),
+
+  // 精确命中优先：模型按提示词只回 id 时，这一步就该结束，
+  // 不进入包含匹配（否则 id 互为子串时会被更短的候选抢走）
+  const exact = candidates.find(
+    (item) => item.id.length > 0 && sameIgnoreCase(text, item.id),
   );
+  if (exact) return { agentId: exact.id, output: text, matchedBy: "id" };
+
+  // 包含匹配取**最长**命中：`agt-local-a` 与 `agt-local-ab` 同时出现在
+  // 候选里时，`agt-local-ab` 的输出必须落到长 id，而不是数组里靠前的短 id
+  const hitById = mostSpecificHit(text, candidates, (item) => item.id);
   if (hitById) return { agentId: hitById.id, output: text, matchedBy: "id" };
 
-  const hitByName = candidates.find(
-    (item) => item.name.length > 0 && includesIgnoreCase(text, item.name),
-  );
+  const hitByName = mostSpecificHit(text, candidates, (item) => item.name);
   if (hitByName)
     return { agentId: hitByName.id, output: text, matchedBy: "name" };
 
   return { agentId: candidates[0].id, output: text, matchedBy: "fallback" };
+}
+
+/** 包含匹配：命中多个时取待匹配串最长的那个（更具体），等长取靠前者 */
+function mostSpecificHit(
+  text: string,
+  candidates: readonly IntentCandidate[],
+  select: (candidate: IntentCandidate) => string,
+): IntentCandidate | null {
+  let best: IntentCandidate | null = null;
+  let bestLength = 0;
+
+  for (const candidate of candidates) {
+    const needle = select(candidate);
+    if (needle.length === 0 || !includesIgnoreCase(text, needle)) continue;
+    if (needle.length > bestLength) {
+      best = candidate;
+      bestLength = needle.length;
+    }
+  }
+
+  return best;
 }
 
 /**
@@ -153,6 +181,10 @@ function includesIgnoreCase(haystack: string, needle: string): boolean {
   return haystack.toLowerCase().includes(needle.toLowerCase());
 }
 
+function sameIgnoreCase(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
+}
+
 /** 分类器形状：dispatch 路由只依赖这一个调用签名，便于注入桩做单测 */
 export type IntentClassifier = (
   text: string,
@@ -179,7 +211,11 @@ export async function resolveDispatchTarget(
 
   try {
     const resolved = await classify(text, candidates);
-    return { agentId: resolved.agentId, fallback: false };
+    // 分类器是可注入的边界：它给出的目标必须落在候选清单内，
+    // 否则下游按 id 反查会落空（dispatch 路由会变成 500）。越界即兜底。
+    const hit = candidates.find((item) => item.id === resolved.agentId);
+    if (!hit) return { agentId: candidates[0].id, fallback: true };
+    return { agentId: hit.id, fallback: false };
   } catch {
     return { agentId: candidates[0].id, fallback: true };
   }
