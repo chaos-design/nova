@@ -195,9 +195,10 @@ NOVA_AGENT_PORT=43112 pnpm run agent:local
 
 ```
 packages/web/tests/
-├── unit/                        # 纯领域逻辑：scoring / verdict
+├── unit/                        # 纯领域逻辑：scoring / verdict / plan-* 验收用例
 ├── integration/
-│   └── agent-protocol.test.ts   # 真起 Agent 进程，走 HTTP 验证协议与完整链路
+│   ├── agent-protocol.test.ts   # 真起 Agent 进程，走 HTTP 验证协议与完整链路
+│   └── plan-*.test.ts           # 路由校验与桩模型全链路（不依赖外部模型）
 └── helpers/
     └── spawn-agent.mjs          # 子进程拉起器（向上找 monorepo 根定位 Agent 入口）
 
@@ -211,6 +212,7 @@ playground/nova-local/tests/
 
 | 命令 | 作用 | 依赖 |
 | :--- | :--- | :--- |
+| `pnpm run verify` | 按 [`docs/verification-plan.md`](docs/verification-plan.md) 跑 14 个任务，并校验任务覆盖与文档一致性 | — |
 | `pnpm run test:unit` | 各包单元测试 | — |
 | `pnpm run test:integration` | web 集成测试（自动拉起 Agent 子进程） | — |
 | `pnpm run test:e2e` | 全栈端到端：探测 → 沙盒执行 → 落库 → 页面可读 | 控制台与 Agent（脚本会自动拉起缺失的那个） |
@@ -341,17 +343,26 @@ Agent 侧不依赖 web；`projectRoot()` 从进程 cwd 向上找 `pnpm-workspace
   [`docs/nova-standard.md`](docs/nova-standard.md) §3.5。
 
 沙盒只有真实执行一条路径（`packages/web/src/lib/nova/executors/live.ts`）。
-仓库自带一个零依赖、可真实运行的执行体：
+仓库自带四个**已登记进控制台**的领域 Agent（两个带真实领域工具），
+以及一个零依赖的离线执行体：
 
 ```bash
-pnpm run agent:local    # http://127.0.0.1:43110/v1（模型 nova-local-agent）
-pnpm run agent:research # http://127.0.0.1:43111/v1（调研专员 nova-research-agent）
+pnpm run agent:travel   # http://127.0.0.1:43113/v1（行程规划师 nova-travel-agent）
+pnpm run agent:writer   # http://127.0.0.1:43114/v1（文案写手 nova-writer-agent）
+pnpm run agent:local    # http://127.0.0.1:43110/v1（离线执行体 nova-local-agent）
+pnpm run agent:research # http://127.0.0.1:43111/v1（深度调研员 nova-research-agent）
 pnpm run agent:coder    # http://127.0.0.1:43112/v1（工程搭档 nova-coder-agent）
 ```
 
-两个领域专家 Agent 的回复来自 `.env` 指向的真实大模型（人格代理），
-已登记进控制台，用于 Converse Lab 的**意图分发**验证；`nova-local` 是
-规则执行体，只用于离线 e2e 与开发者自测，不进控制台。
+- **NOVA-TRAVEL / NOVA-WRITER**：回复来自 `.env` 指向的真实大模型（人格代理），
+  并且自带真实工具 —— 行程规划师真查地理编码 / 天气 / 汇率，文案写手真算文本
+  统计、真查中文维基百科；工具在 Agent 侧就地执行，被 NOVA 观测的工具调用
+  仍是执行器代执行的 `external_search` / `summarize`（协议 §3.4）。已登记为
+  `agt-local-travel` / `agt-local-writer`，是 Converse Lab **意图分发**的验证对象；
+- **nova-local**：规则执行体，只用于离线 e2e 与开发者自测，不进控制台；
+- **nova-research / nova-coder**：不带工具的纯人格代理（把 NOVA 下发的
+  `external_search` / `summarize` 原样透传，工具由 NOVA 代执行）；
+  四个领域的边界两两互斥，是意图分发验证的四个候选。
 
 **换成真实后端的路径**：替换 `run-store.ts` 内部的读写实现（换成数据库或
 远端 API），对外的函数签名不变，`packages/web/src/lib/nova` 之上的页面与组件都不需要改动。

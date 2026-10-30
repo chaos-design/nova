@@ -10,6 +10,7 @@
 
 ## 目录
 
+- [快捷通道（推荐路径）](#快捷通道推荐路径)
 - [1. NOVA 期望的 Agent 协议](#1-nova-期望的-agent-协议)
 - [2. 开发一个本地 Agent](#2-开发一个本地-agent)
 - [3. 注册进 NOVA](#3-注册进-nova)
@@ -19,6 +20,34 @@
 - [7. 指向真实模型服务（Ollama / vLLM / LM Studio）](#7-指向真实模型服务ollama--vllm--lm-studio)
 - [8. 诊断清单](#8-诊断清单)
 - [9. 边界与约束](#9-边界与约束)
+---
+
+## 快捷通道（推荐路径）
+
+从「想要一个 Agent」到「完成首轮验证」，推荐走工具化的三步，
+每步的产物都可验证；第 2 / 3 / 4 节的手工路径适合理解原理或做非标准接入。
+
+**第 1 步 · 生成**：`pnpm run agent:new -- --name nova-analyst`
+一键生成 `playground/nova-analyst/` 全套 —— 薄入口（复用
+`@chaos-design/agent-kit` 的配置引导 / 人格加载 / 上游调用 / 工具层 / HTTP 路由）、
+`persona.md` 骨架（XML 标签分节）、`agent.config.yaml`、package.json 与
+集成测试。名称做 `nova-` 前缀校验，id / 模型标识 / 端口自动避开既有登记
+（端口从 43113 起分配）。改 `persona.md` 里的〔占位〕为人格后，
+`pnpm install && pnpm --filter @chaos-design/nova-analyst test` 即可冒烟；
+要让它有真本事，再加一个 `tools.mjs` 声明自带工具（第 6.3 节）。
+
+**第 2 步 · 登记**：启动端点后，在注册表页点「接入新 Agent」：
+探测会列出端点上的模型清单（点选即填），登记 id 与既有档案撞车时
+当场提示；确认后复制 `local-agents.ts` 片段与 `.env.local` 片段，
+提交登记（随仓库走，经 code review），重启 `npm run dev` 生效。
+
+**第 3 步 · 验证**：档案卡上点「快捷验证」，直达
+`/converse?agent=<id>&case=<用例键>` —— 自动选中该 Agent 并发起对应用例
+（行程规划 / 文案体检 / 交叉验证调研等，见
+`src/lib/nova/verification-cases.ts`）；需要更系统的结论再去沙盒跑完整
+场景拿评分。意图分发验证：勾选多个目标、执行方式切「意图分发」，调研 /
+工程 / 行程 / 文案四类消息应分别路由给对应的那个 Agent（见第 6.2 节）。
+注意：**对话执行期间目标与执行方式会锁定**，要换配置请先等本轮结束。
 
 ---
 
@@ -150,8 +179,8 @@ createServer((req, res) => {
 }
 ```
 
-> 仓库已预置一条登记（NOVA-LOCAL，见第 6 节）。自己接入时请换用
-> 新的 `id`，不要覆盖样例。
+> 登记表当前有四条：深度调研员 / 工程搭档 / 行程规划师 / 文案写手
+> （见第 6.2 节）。自己接入时请换用新的 `id`，不要覆盖已登记的条目。
 
 规则（不可违反）：
 
@@ -247,31 +276,99 @@ pnpm run agent:local
 照第 2 节的两个路由写即可，端口不要撞 43110。写完后在第 3 节的位置追加
 一条登记，`model` 必须与 `/v1/models` 里的 id 一致。
 
-### 6.2 领域专家 Agent：NOVA-RESEARCH 与 NOVA-CODER
+### 6.2 已登记的领域专家 Agent（四个）
 
-`playground/nova-research`（调研专员 · 端口 43111）与
-`playground/nova-coder`（工程搭档 · 端口 43112）是两个**真实大模型
-人格代理**：收到请求后把领域人格插到对话最前，转发给 `agent.llm`
-指向的真实端点（`.env` 的 `NOVA_LLM_*`），响应再以请求的模型 id 整形回去。
-因为回复出自真实模型，它们可以登记进控制台：
+控制台里当前登记的就是这四个 Agent（`LOCAL_AGENTS` 里就是它们四条 + e2e 门控条目）：
 
 ```bash
-pnpm run agent:research   # http://127.0.0.1:43111/v1（模型 nova-research-agent）
-pnpm run agent:coder      # http://127.0.0.1:43112/v1（模型 nova-coder-agent）
+pnpm run agent:research # http://127.0.0.1:43111/v1（深度调研员 nova-research-agent）
+pnpm run agent:coder    # http://127.0.0.1:43112/v1（工程搭档 nova-coder-agent）
+pnpm run agent:travel   # http://127.0.0.1:43113/v1（行程规划师 nova-travel-agent）
+pnpm run agent:writer   # http://127.0.0.1:43114/v1（文案写手 nova-writer-agent）
 ```
 
-- 已登记为 `agt-local-research` / `agt-local-coder`；
-- 两者职责互斥（调研 ↔ 工程），是 Converse Lab **意图分发**的验证对象：
-  选定两个专家、执行方式切「意图分发」后，调研类消息应路由给
-  NOVA-RESEARCH，工程类消息应路由给 NOVA-CODER；
+四个 Agent 都是**真实大模型人格代理**：收到请求后把领域人格插到对话最前，
+转发给 `agent.llm` 指向的真实端点（`.env` 的 `NOVA_LLM_*`），响应再以请求的
+模型 id 整形回去。其中行程规划师与文案写手**另带真实领域工具**：模型请求它们
+时由本服务就地真实执行，结果只回灌给上游模型（第 6.3 节）。
+
+| | 领域 | 自带工具 | 登记 id |
+| :--- | :--- | :--- | :--- |
+| NOVA-RESEARCH 深度调研员 | 课题拆解、多侧面检索、交叉验证、数据缺口分析 | 无（`external_search` / `summarize` 由 NOVA 代执行） | `agt-local-research` |
+| NOVA-CODER 工程搭档 | 编码、调试排错、重构、脚本与工具链、接口联调 | 无（同上） | `agt-local-coder` |
+| NOVA-TRAVEL 行程规划师 | 目的地情报、逐日排期、预算、天气与风险 | `geocode_place`（Open-Meteo 地理编码）、`weather_outlook`（Open-Meteo 预报）、`currency_rate`（Frankfurter 汇率） | `agt-local-travel` |
+| NOVA-WRITER 文案写手 | 公众号长文 / 小红书笔记 / 标题组、稿件打磨 | `text_stats`（字数 / 句长 / 段落 / 重复字组，真实计算）、`lookup_term`（中文维基百科核验） | `agt-local-writer` |
+
+- 四个入口都是薄封装：配置引导、人格加载、上游调用、工具层与 OpenAI 兼容
+  路由全部来自 `packages/agent-kit`（`@chaos-design/agent-kit`），本包只保留
+  模型标识、端口、`persona.md`（带工具的还多一个 `tools.mjs`）；新 Agent 用
+  `pnpm run agent:new` 生成同样的结构（见「快捷通道」第 1 步）；
+- 四个领域两两互斥（调研 ↔ 工程 ↔ 行程 ↔ 文案），是 Converse Lab **意图分发**
+  的验证对象：勾选多个目标、执行方式切「意图分发」后，调研类消息应路由给
+  NOVA-RESEARCH、工程类给 NOVA-CODER、行程类给 NOVA-TRAVEL、文案类给
+  NOVA-WRITER；意图分类的候选领域描述取自登记条目的 `tagline`（协议 §4.1）；
 - 人格提示词独立在各包的 `persona.md`，用 XML 自定义标签分节
-  （`<role>` / `<responsibility>` / `<workflow>` / `<tool-output-policy>`）：
-  标签原文随提示词发给上游，启动时校验配对（缺文件 / 空文件 / 超 8000
-  字符 / 标签未配对都会拒绝启动），改人格不需要动代码；
-- 工具原样透传：`external_search` / `summarize` 由 NOVA 执行器真实代执行，
-  人格层不改写任何工具语义；
+  （`<role>` / `<workflow>` / `<tool-output-policy>`）：标签原文随提示词发给
+  上游，启动时校验配对（缺文件 / 空文件 / 超 8000 字符 / 标签未配对都会拒绝
+  启动），改人格不需要动代码；
 - 上游端点与密钥沿用根配置 `agent.llm`（`.env` 的 `NOVA_LLM_*`），
   本地服务自身无鉴权、不持密钥。
+
+对话验证里另有两条对应用例（`/converse` 用例面板）：**行程规划** 与
+**文案体检**，专门考察带工具的两个 Agent 是否真的用上了自带工具；
+**交叉验证调研**等用例对四个 Agent 都适用（考察的是工具规范与多轮上下文）。
+
+### 6.3 让 Agent 自带真实工具（协议 §3.4）
+
+纯人格代理只会转发；要让 Agent 有真本事，就在它的包里加一个 `tools.mjs`，
+用 `agent-kit` 的 `defineTool` 声明工具、`createDomainToolkit` 装进入口：
+
+```js
+// playground/nova-xxx/tools.mjs
+import { defineTool, fetchJson } from "@chaos-design/agent-kit";
+
+export const myTools = [
+  defineTool({
+    name: "lookup_weather",
+    description: "取真实天气预报",
+    parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] },
+    async handler(args, ctx) {
+      const payload = await fetchJson(`https://example.com/api?city=${encodeURIComponent(args.city)}`, {
+        timeoutMs: ctx.timeoutMs,
+      });
+      return { content: JSON.stringify(payload), records: 1 };
+    },
+  }),
+];
+```
+
+```js
+// playground/nova-xxx/index.mjs 的接线
+export const toolkit = createDomainToolkit({ tools: myTools, maxRounds: 3, timeoutMs: 12_000 });
+export const handleChat = createChatHandler({ model, personaLayer: boot.persona, upstream, upstreamModel, toolkit });
+```
+
+工具层负责的四件事（都不需要各 Agent 自己写）：
+
+- **执行边界**：名字属于本 Agent 的调用就地执行，`external_search` / `summarize`
+  原样透传给 NOVA 执行器——被评测的工具调用仍然只有 NOVA 那一套，评分口径不受影响；
+- **失败回灌**：handler 抛错转成 `错误：…` 的 `role=tool` 消息，让上游有机会降级重试；
+- **轮次护栏**：默认 3 轮（可配），用尽后剥掉工具强制文本收口，并把本地工具名
+  从响应里摘掉（避免给 NOVA 制造「未知工具」失败记录）；
+- **token 记账**：自执行轮次消耗的 token 累计进响应 `usage`。
+
+`handler` 里可以放任何真实逻辑：HTTP 请求、SQL 查询、本地计算。判据只有一条：
+**宁可如实报错，也不要伪造数据** —— 工具输出会进模型上下文，"看起来有结果"的
+假数据比一条可读的错误危险得多。
+
+### 6.4 不带工具的纯人格代理（NOVA-RESEARCH / NOVA-CODER）
+
+四个已登记的 Agent 里，调研员与工程搭档是**不带工具的最小人格代理**：它们
+把请求连同 NOVA 下发的 `external_search` / `summarize` 原样转给上游模型，
+工具调用与结果回灌全部由 NOVA 执行器完成（第 6.2 节表格第一、二行）。
+
+需要「一个只注入人格、不碰任何工具」的对照物时用这两个；要自带真实数据源
+就按第 6.3 节给 Agent 加 `tools.mjs`。
 
 ## 7. 指向真实模型服务（Ollama / vLLM / LM Studio）
 

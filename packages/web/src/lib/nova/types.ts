@@ -235,6 +235,10 @@ export interface SimulationLog {
   message: string;
   /** 补充明细（如返回体片段、耗时） */
   detail?: string;
+  /** 步骤种类：思考推理 / 调用执行 / 平台动作（对话验证的 trace 分区用） */
+  kind?: "think" | "call" | "system";
+  /** 该步骤自身耗时（毫秒）：模型调用与工具执行的实测耗时 */
+  durationMs?: number;
 }
 
 /* -------------------------------------------------------------------------- */

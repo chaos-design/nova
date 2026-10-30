@@ -2,6 +2,7 @@
   "name": "@chaos-design/config",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "NOVA 统一配置加载器（控制台与本地 Agent 共享的配置读取入口）",
   "type": "module",
   "main": "./src/config.mjs",

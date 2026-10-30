@@ -8,6 +8,7 @@ import {
   LOCAL_AGENTS,
   localAgentProfile,
 } from "@/lib/nova";
+import { envLlmDefault } from "@/lib/nova/env-llm";
 
 export const metadata: Metadata = {
   title: "沙盒模拟器",
@@ -35,7 +36,11 @@ export default function SandboxPage() {
         subtitle="选定 Agent、写下系统提示词、注入网络延迟或畸形载荷，然后观察它如何在失败中自我纠正。沙盒只保留真实执行一条路径：分数由被测 Agent 的真实行为算出，可横向对照。"
       />
 
-      <SandboxPlayground agents={agents} localAgents={LOCAL_AGENTS} />
+      <SandboxPlayground
+        agents={agents}
+        localAgents={LOCAL_AGENTS}
+        llmDefault={envLlmDefault()}
+      />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="nova-panel rounded-xl p-4 lg:col-span-2">

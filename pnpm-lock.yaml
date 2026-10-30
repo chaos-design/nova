@@ -16,6 +16,19 @@ importers:
         specifier: 2.4.2
         version: 2.4.2
 
+  packages/agent-kit:
+    dependencies:
+      '@chaos-design/config':
+        specifier: workspace:*
+        version: link:../nova-config
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^3.2.7
+        version: 3.2.7(vitest@3.2.7(@types/debug@4.1.13)(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.32.0))
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.32.0)
+
   packages/nova-config:
     dependencies:
       js-yaml:
@@ -116,6 +129,9 @@ importers:
 
   playground/nova-coder:
     dependencies:
+      '@chaos-design/agent-kit':
+        specifier: workspace:*
+        version: link:../../packages/agent-kit
       '@chaos-design/config':
         specifier: workspace:*
         version: link:../../packages/nova-config
@@ -142,6 +158,41 @@ importers:
 
   playground/nova-research:
     dependencies:
+      '@chaos-design/agent-kit':
+        specifier: workspace:*
+        version: link:../../packages/agent-kit
+      '@chaos-design/config':
+        specifier: workspace:*
+        version: link:../../packages/nova-config
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^3.2.7
+        version: 3.2.7(vitest@3.2.7(@types/debug@4.1.13)(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.32.0))
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.32.0)
+
+  playground/nova-travel:
+    dependencies:
+      '@chaos-design/agent-kit':
+        specifier: workspace:*
+        version: link:../../packages/agent-kit
+      '@chaos-design/config':
+        specifier: workspace:*
+        version: link:../../packages/nova-config
+    devDependencies:
+      '@vitest/coverage-v8':
+        specifier: ^3.2.7
+        version: 3.2.7(vitest@3.2.7(@types/debug@4.1.13)(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.32.0))
+      vitest:
+        specifier: ^3.2.7
+        version: 3.2.7(@types/debug@4.1.13)(@types/node@20.19.43)(jiti@2.7.0)(lightningcss@1.32.0)
+
+  playground/nova-writer:
+    dependencies:
+      '@chaos-design/agent-kit':
+        specifier: workspace:*
+        version: link:../../packages/agent-kit
       '@chaos-design/config':
         specifier: workspace:*
         version: link:../../packages/nova-config

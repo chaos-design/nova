@@ -18,7 +18,7 @@ export default defineConfig({
       reportsDirectory: config.test.coverageDir,
       reporter: ["text", "html", "json-summary"],
       all: true,
-      include: ["index.mjs", "persona.mjs"],
+      include: ["index.mjs"],
       exclude: ["**/node_modules/**"],
       thresholds: {
         lines: config.test.coverageThreshold,

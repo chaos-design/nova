@@ -15,6 +15,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { getConfig, projectRoot } from "@chaos-design/config";
 
+// 端到端验证进程的标记：随 spawn 传给控制台，打开两件 e2e 专属配置 ——
+// 登记表注入离线执行体（agt-local-nova，见 local-agents.ts 的 E2E_AGENTS）
+// 与独立产物目录（next.config 的 .next-e2e，不与运行中的 dev server 抢 .next）
+process.env.NOVA_E2E = "1";
+
 const config = getConfig();
 const root = projectRoot();
 
@@ -93,7 +98,9 @@ async function ensureAll() {
   if (await reachable(`${NOVA_URL}/dashboard`)) {
     console.log(`✓ 控制台已在运行：${NOVA_URL}`);
   } else {
-    // next 的 bin 在 packages/web/node_modules，控制台必须从包目录启动
+    // next 的 bin 在 packages/web/node_modules，控制台必须从包目录启动。
+    // NOVA_E2E=1 打开两件事：登记表注入离线执行体（agt-local-nova）、
+    // Next 使用独立的 .next-e2e 产物目录（不与正在运行的 dev server 冲突）
     await ensureService(
       "控制台",
       path.join(root, "packages", "web", "scripts", "dev.mjs"),
@@ -184,7 +191,23 @@ async function main() {
   });
 
   if (!runResponse.ok || !runResponse.body) {
-    throw new Error(`沙盒执行请求失败：HTTP ${runResponse.status}`);
+    const detail = await runResponse.json().catch(() => null);
+    if (
+      runResponse.status === 400 &&
+      typeof detail?.message === "string" &&
+      detail.message.includes("未注册")
+    ) {
+      throw new Error(
+        "复用的控制台没有 e2e 专用登记（它启动时没带 NOVA_E2E=1）。\n" +
+          "  处理：停掉当前 dev server 后重跑 test:e2e（e2e 会自己拉起带登记的实例），\n" +
+          "  或用 NOVA_DEV_PORT=<空闲端口> 让 e2e 在另一端口自起独立实例。",
+      );
+    }
+    throw new Error(
+      `沙盒执行请求失败：HTTP ${runResponse.status}${
+        detail?.message ? `：${detail.message}` : ""
+      }`,
+    );
   }
 
   let done = null;

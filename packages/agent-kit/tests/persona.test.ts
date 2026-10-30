@@ -1,6 +1,4 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { HttpError, handleChat } from "../index.mjs";
 import {
   createPersonaLayer,
   findTagIssues,
@@ -9,11 +7,12 @@ import {
 } from "../persona.mjs";
 
 /**
- * 调研专员的协议整形测试。
+ * 人格层纯逻辑测试（原 nova-research / nova-coder 各自维护，
+ * 抽到 agent-kit 后单源化）。
  *
  * 人格代理的全部价值在于「转发不失真」：NOVA 的工具定义、采样参数、
  * 对话历史必须原样到达上游，响应又必须以登记的模型 id 回去。
- * 这里直接打纯函数与 handleChat（注入桩上游），不烧一次真实 token。
+ * 全部用例打纯函数，不烧一次真实 token。
  */
 
 const FIXTURE_PROMPT = [
@@ -134,21 +133,6 @@ describe("findTagIssues", () => {
   });
 });
 
-describe("persona.md 与人格层的一致性", () => {
-  it("入口加载的就是仓库里的 persona.md（trim 后）", () => {
-    const filePrompt = readFileSync(
-      new URL("../persona.md", import.meta.url),
-      "utf8",
-    )
-      .replace(/^\uFEFF/, "")
-      .trim();
-
-    expect(filePrompt.length).toBeGreaterThan(0);
-    expect(filePrompt.length).toBeLessThanOrEqual(PERSONA_MAX_CHARS);
-    expect(findTagIssues(filePrompt)).toEqual([]);
-  });
-});
-
 describe("toClientResponse", () => {
   const upstream = {
     id: "chatcmpl-up-1",
@@ -176,15 +160,15 @@ describe("toClientResponse", () => {
   };
 
   it("model 回显请求的登记 id，而不是上游真实 id", () => {
-    const completion = toClientResponse(upstream, "nova-coder-agent");
+    const completion = toClientResponse(upstream, "kit-test-model");
 
-    expect(completion.model).toBe("nova-coder-agent");
+    expect(completion.model).toBe("kit-test-model");
     expect(completion.id).toBe("chatcmpl-up-1");
     expect(completion.object).toBe("chat.completion");
   });
 
   it("tool_calls 与 finish_reason、usage 原样透传", () => {
-    const completion = toClientResponse(upstream, "nova-coder-agent");
+    const completion = toClientResponse(upstream, "kit-test-model");
 
     expect(completion.choices[0].finish_reason).toBe("tool_calls");
     expect(completion.choices[0].message.tool_calls).toHaveLength(1);
@@ -198,7 +182,7 @@ describe("toClientResponse", () => {
   it("usage 缺字段按 0 计，total 回退为 prompt + completion", () => {
     const completion = toClientResponse(
       { choices: [{ message: { role: "assistant", content: "ok" } }] },
-      "nova-coder-agent",
+      "kit-test-model",
     );
 
     expect(completion.usage).toEqual({
@@ -210,62 +194,14 @@ describe("toClientResponse", () => {
     expect(completion.id).toMatch(/^chatcmpl-/);
   });
 
-  it("上游缺 choices[0].message 时返回 null，交由入口转错误", () => {
-    expect(toClientResponse({ choices: [] }, "nova-coder-agent")).toBeNull();
-    expect(toClientResponse(null, "nova-coder-agent")).toBeNull();
+  it("上游缺 choices[0].message 时返回 null，交由处理器转错误", () => {
+    expect(toClientResponse({ choices: [] }, "kit-test-model")).toBeNull();
+    expect(toClientResponse(null, "kit-test-model")).toBeNull();
   });
 });
 
-describe("handleChat", () => {
-  const upstreamOk = {
-    choices: [{ message: { role: "assistant", content: "实现完成…" } }],
-    usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-  };
-
-  it("happy path：人格注入 + 上游转发 + 以登记模型 id 返回", async () => {
-    let captured: { model?: string; messages?: unknown[] } | undefined;
-    const completion = await handleChat(
-      { model: "nova-coder-agent", messages: NOVA_MESSAGES, tools: TOOLS },
-      {
-        upstream: async (payload) => {
-          captured = payload;
-          return upstreamOk;
-        },
-      },
-    );
-
-    const filePrompt = readFileSync(
-      new URL("../persona.md", import.meta.url),
-      "utf8",
-    ).trim();
-
-    expect(captured?.model).toBe("agnes-3.0-flash");
-    expect(captured?.messages?.[0]).toEqual({
-      role: "system",
-      content: filePrompt,
-    });
-    expect(completion.model).toBe("nova-coder-agent");
-    expect(completion.choices[0].message.content).toBe("实现完成…");
-  });
-
-  it("模型标识不一致时 400，不烧上游 token（协议 §1）", async () => {
-    const error = await handleChat(
-      { model: "wrong-model", messages: NOVA_MESSAGES },
-      { upstream: async () => upstreamOk },
-    ).catch((e) => e);
-
-    expect(error).toBeInstanceOf(HttpError);
-    expect(error.status).toBe(400);
-    expect(error.message).toContain("nova-coder-agent");
-  });
-
-  it("上游响应缺 choices[0].message 时 502", async () => {
-    const error = await handleChat(
-      { model: "nova-coder-agent", messages: NOVA_MESSAGES },
-      { upstream: async () => ({ object: "chat.completion" }) },
-    ).catch((e) => e);
-
-    expect(error).toBeInstanceOf(HttpError);
-    expect(error.status).toBe(502);
+describe("PERSONA_MAX_CHARS", () => {
+  it("与控制台系统提示词的静态校验上限同口径", () => {
+    expect(PERSONA_MAX_CHARS).toBe(8_000);
   });
 });

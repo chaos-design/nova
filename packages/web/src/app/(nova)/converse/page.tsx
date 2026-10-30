@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ConverseLab } from "@/components/nova/converse-lab";
 import { LOCAL_AGENTS, localAgentProfile } from "@/lib/nova";
+import { envLlmDefault } from "@/lib/nova/env-llm";
 
 export const metadata: Metadata = {
   title: "对话验证",
@@ -17,13 +18,32 @@ export const dynamic = "force-dynamic";
  * 页头与全部交互（发送、prompt 抽屉、配置弹窗）收敛在 `ConverseLab`
  * 一个客户端组件里；页面只做取数。负下边距抵消外壳 main 的 pb-8：
  * 输入卡贴住视口底，同时页面不出滚动条。
+ *
+ * 快捷验证深链：`/converse?agent=<id>&case=<key>` —— 档案卡的
+ * 「快捷验证」入口指向这里，服务端解析参数后作为 props 下发
+ * （客户端组件不直接读 URL，保持首屏数据全由服务端传入的约定）。
  */
-export default function ConversePage() {
+export default async function ConversePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const params = await searchParams;
+  const agentParam =
+    typeof params.agent === "string" ? params.agent : undefined;
+  const caseParam = typeof params.case === "string" ? params.case : undefined;
+
   const agents = LOCAL_AGENTS.map(localAgentProfile);
 
   return (
     <div className="-mb-8">
-      <ConverseLab agents={agents} localAgents={LOCAL_AGENTS} />
+      <ConverseLab
+        agents={agents}
+        localAgents={LOCAL_AGENTS}
+        llmDefault={envLlmDefault()}
+        initialAgentId={agentParam}
+        initialCaseKey={caseParam}
+      />
     </div>
   );
 }

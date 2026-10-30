@@ -11,6 +11,53 @@ import {
 } from "@/lib/nova";
 
 /**
+ * 日志行渲染：两个高度模式共用同一套行结构，
+ * 避免任一边多了耗时徽标 / 明细折行另一边没有
+ */
+function LogRows({ logs }: { logs: readonly SimulationLog[] }) {
+  return (
+    <ol className="space-y-1 pr-3 font-mono text-xs">
+      {logs.map((log) => (
+        <li
+          key={log.id}
+          className="grid grid-cols-[auto_1fr] items-start gap-2 rounded px-1 py-0.5 transition-colors hover:bg-white/3"
+        >
+          <span className="flex items-center gap-1.5">
+            <span
+              aria-hidden="true"
+              className={cn(
+                "h-3 w-0.5 rounded-full",
+                LOG_LEVEL_BAR_CLASS[log.level],
+              )}
+            />
+            <span className="text-muted-foreground/70 tabular-nums">
+              {formatDuration(log.atMs)}
+            </span>
+          </span>
+          <span className="min-w-0">
+            <span className="text-muted-foreground/50">#{log.step}</span>{" "}
+            <span className={cn("uppercase", LOG_LEVEL_CLASS[log.level])}>
+              [{log.actor}]
+            </span>{" "}
+            <span className="text-foreground/90">{log.message}</span>
+            {log.durationMs !== undefined && (
+              <span className="ml-1.5 rounded bg-white/6 px-1 font-mono text-[0.625rem] tabular-nums text-muted-foreground">
+                {log.durationMs}ms
+              </span>
+            )}
+            {log.detail && (
+              <span className="mt-0.5 block whitespace-pre-wrap break-words text-[0.6875rem] leading-relaxed text-muted-foreground/70">
+                ↳ {log.detail}
+              </span>
+            )}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/**
  * 日志流视图。
  *
  * 遥测中枢的事件总线与沙盒模拟的运行日志共用本组件：
@@ -59,78 +106,14 @@ export function LogStream({
   if (autoHeight) {
     return (
       <div ref={viewport} className={cn("overflow-y-auto", heightClass)}>
-        <ol className="space-y-1 pr-3 font-mono text-xs">
-          {logs.map((log) => (
-            <li
-              key={log.id}
-              className="grid grid-cols-[auto_1fr] items-start gap-2 rounded px-1 py-0.5 transition-colors hover:bg-white/3"
-            >
-              <span className="flex items-center gap-1.5">
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "h-3 w-0.5 rounded-full",
-                    LOG_LEVEL_BAR_CLASS[log.level],
-                  )}
-                />
-                <span className="text-muted-foreground/70 tabular-nums">
-                  {formatDuration(log.atMs)}
-                </span>
-              </span>
-              <span className="min-w-0">
-                <span className="text-muted-foreground/50">#{log.step}</span>{" "}
-                <span className={cn("uppercase", LOG_LEVEL_CLASS[log.level])}>
-                  [{log.actor}]
-                </span>{" "}
-                <span className="text-foreground/90">{log.message}</span>
-                {log.detail && (
-                  <span className="block truncate text-[0.6875rem] text-muted-foreground/70">
-                    ↳ {log.detail}
-                  </span>
-                )}
-              </span>
-            </li>
-          ))}
-        </ol>
+        <LogRows logs={logs} />
       </div>
     );
   }
 
   return (
     <ScrollArea ref={viewport} className={heightClass}>
-      <ol className="space-y-1 pr-3 font-mono text-xs">
-        {logs.map((log) => (
-          <li
-            key={log.id}
-            className="grid grid-cols-[auto_1fr] items-start gap-2 rounded px-1 py-0.5 transition-colors hover:bg-white/3"
-          >
-            <span className="flex items-center gap-1.5">
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "h-3 w-0.5 rounded-full",
-                  LOG_LEVEL_BAR_CLASS[log.level],
-                )}
-              />
-              <span className="text-muted-foreground/70 tabular-nums">
-                {formatDuration(log.atMs)}
-              </span>
-            </span>
-            <span className="min-w-0">
-              <span className="text-muted-foreground/50">#{log.step}</span>{" "}
-              <span className={cn("uppercase", LOG_LEVEL_CLASS[log.level])}>
-                [{log.actor}]
-              </span>{" "}
-              <span className="text-foreground/90">{log.message}</span>
-              {log.detail && (
-                <span className="block truncate text-[0.6875rem] text-muted-foreground/70">
-                  ↳ {log.detail}
-                </span>
-              )}
-            </span>
-          </li>
-        ))}
-      </ol>
+      <LogRows logs={logs} />
     </ScrollArea>
   );
 }

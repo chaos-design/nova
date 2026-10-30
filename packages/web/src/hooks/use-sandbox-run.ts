@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  type ConverseOverrides,
   type ExecutorId,
   type ExecutorResult,
   readSseStream,
@@ -140,7 +141,7 @@ export function useSandboxRun() {
 
   /** 单次 POST + SSE 流式读取 */
   const runRemote = useCallback(
-    async (config: SimulationConfig) => {
+    async (config: SimulationConfig, overrides?: ConverseOverrides) => {
       const controller = prepare();
 
       try {
@@ -153,6 +154,8 @@ export function useSandboxRun() {
             environment: config.environment,
             chaos: config.chaos,
             maxSteps: config.maxSteps,
+            // 全局大模型配置里选中的连接档案：缺省即"沿用登记条目与 .env"
+            overrides,
           }),
           signal: controller.signal,
         });

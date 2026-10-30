@@ -5,7 +5,13 @@ import type {
   LiveRunRequest,
   SandboxEvent,
 } from "@/lib/nova";
-import { CHAOS_KINDS, localAgentById, localAgentProfile } from "@/lib/nova";
+import {
+  CHAOS_KINDS,
+  localAgentById,
+  localAgentProfile,
+  normalizeEndpoint,
+} from "@/lib/nova";
+import { sanitizeOverrides } from "@/lib/nova/executors/converse-request";
 import { runLive } from "@/lib/nova/executors/live";
 import { recordRun } from "@/lib/nova/run-store";
 
@@ -47,6 +53,14 @@ export async function POST(request: Request) {
     return jsonError(config.error, config.hint, 400);
   }
 
+  // 大模型连接的覆盖值走与对话验证同一套校验：协议必须显式 http(s)，
+  // 长度钳到远超实际用量的上限。缺省（未选自定义档案）即「无覆盖」。
+  const overrides = sanitizeOverrides(payload.overrides);
+
+  if ("error" in overrides) {
+    return jsonError(overrides.error, overrides.hint, 400);
+  }
+
   if (!isValidChaos(config.value.chaos)) {
     return jsonError(
       "chaos 配置含未知故障类型",
@@ -70,16 +84,19 @@ export async function POST(request: Request) {
 
   const profile: AgentProfile = localAgentProfile(localEntry);
 
-  // 端点与模型取登记条目（每个本地 Agent 有自己的服务），
-  // 密钥与 token 上限取统一配置 —— 登记侧只存变量名，不存值
+  // 端点与模型默认取登记条目（每个本地 Agent 有自己的服务），
+  // 全局大模型配置里选中自定义档案时才由 overrides 覆盖；
+  // 密钥优先级：界面覆盖 > 登记的 env 变量 > 统一配置（.env 的 NOVA_LLM_API_KEY）。
+  // 登记侧只存变量名，不存值。
   const novaConfig = getConfig();
   const effectiveSettings = {
-    baseUrl: localEntry.endpoint,
+    baseUrl: normalizeEndpoint(overrides.value.endpoint ?? localEntry.endpoint),
     apiKey:
+      overrides.value.apiKey ||
       process.env[localEntry.apiKeyEnv]?.trim() ||
       novaConfig.agent.llm.apiKey ||
       "",
-    model: localEntry.model,
+    model: overrides.value.model ?? localEntry.model,
     maxTokens: novaConfig.agent.llm.maxTokens,
     timeoutMs: novaConfig.agent.llm.timeoutMs,
   };

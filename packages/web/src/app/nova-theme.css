@@ -285,8 +285,3 @@ html[data-nova-accent] {
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
-
-/** 卡片上下不留白：垂直节奏由各 CardContent / Header 自身控制 */
-[data-slot="card"] {
-  padding-block: 0;
-}
